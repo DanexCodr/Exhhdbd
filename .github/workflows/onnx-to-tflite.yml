@@ -1,15 +1,16 @@
 name: Convert ONNX to TFLite
 
 on:
-  push:
-    paths:
-      - model.onnx
+  workflow_dispatch:    # manual trigger, since no local model.onnx push
+  # optionally add schedule or other triggers
 
 jobs:
   convert:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Download model.onnx from Release asset
+        run: |
+          curl -L -o model.onnx "$(curl -s https://api.github.com/repos/yourusername/yourrepo/releases/tags/v1.0 | grep browser_download_url | grep model.onnx | cut -d '"' -f 4)"
 
       - name: Setup Python
         uses: actions/setup-python@v4
