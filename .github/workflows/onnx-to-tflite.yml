@@ -9,20 +9,17 @@ jobs:
   convert:
     runs-on: ubuntu-latest
     steps:
-      - name: Get latest release download URL for model.onnx
-        id: get_url
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download model.onnx from Release asset
         run: |
-          LATEST_URL=$(curl -s https://api.github.com/repos/DanexCodr/Exhhdbd/releases/latest \
+          DOWNLOAD_URL=$(curl -s https://api.github.com/repos/DanexCodr/Exhhdbd/releases/tags/Durhrj \
             | grep browser_download_url \
             | grep model.onnx \
-            | head -n 1 \
             | cut -d '"' -f 4)
-          echo "url=$LATEST_URL" >> $GITHUB_OUTPUT
-
-      - name: Download model.onnx from latest release asset
-        run: |
-          echo "Downloading from ${{ steps.get_url.outputs.url }}"
-          curl -L -o model.onnx "${{ steps.get_url.outputs.url }}"
+          echo "Downloading from $DOWNLOAD_URL"
+          curl -L -o model.onnx "$DOWNLOAD_URL"
 
       - name: Setup Python
         uses: actions/setup-python@v4
@@ -35,6 +32,13 @@ jobs:
 
       - name: Run conversion script
         run: |
+          python convert.py
+
+      - name: Upload TFLite artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: model-tflite
+          path: model.tflite        run: |
           python convert.py
 
       - name: Upload TFLite artifact
