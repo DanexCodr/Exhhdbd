@@ -1,0 +1,31 @@
+name: Convert ONNX to TFLite
+
+on:
+  push:
+    paths:
+      - model.onnx
+
+jobs:
+  convert:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: Install dependencies
+        run: |
+          pip install onnx onnx-tf tensorflow
+
+      - name: Run conversion script
+        run: |
+          python convert.py
+
+      - name: Upload TFLite artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: model-tflite
+          path: model.tflite
