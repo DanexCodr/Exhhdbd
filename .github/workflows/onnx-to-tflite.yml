@@ -10,7 +10,7 @@ jobs:
     steps:
       - name: Download model.onnx from Release asset
         run: |
-          curl -L -o model.onnx "$(curl -s https://api.github.com/repos/yourusername/yourrepo/releases/tags/v1.0 | grep browser_download_url | grep model.onnx | cut -d '"' -f 4)"
+          curl -L -o model.onnx "$(curl -s https://api.github.com/repos/DanexCodr/Exhhdbd/releases/tags/Duehebeuhd | grep browser_download_url | grep model.onnx | cut -d '"' -f 4)"
 
       - name: Setup Python
         uses: actions/setup-python@v4
