@@ -38,11 +38,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: model-tflite
-          path: model.tflite        run: |
-          python convert.py
-
-      - name: Upload TFLite artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: model-tflite
           path: model.tflite
