@@ -141,14 +141,18 @@ def autopatch_model(model):
     clean_node_attributes_and_inputs(model)  # add this at the end to fix any None attribute fields
 
 def check_none_attributes(model):
-    for node in model.graph.node:
+    for i, node in enumerate(model.graph.node):
         for attr in node.attribute:
             if attr is None:
-                raise ValueError(f"Node '{node.name or node.op_type}' has None attribute object")
-            # Check all fields inside the attribute for None
-            for field, value in attr.ListFields():
-                if value is None:
-                    raise ValueError(f"Node '{node.name or node.op_type}' attribute '{attr.name}' field '{field.name}' is None")
+                print(f"[Node {i} - {node.name or node.op_type}] has None attribute!")
+            else:
+                fields = attr.ListFields()
+                for name, val in fields:
+                    if val is None:
+                        print(f"[Node {i} - {node.name or node.op_type}] attribute '{attr.name}' field '{name}' is None!")
+        for idx, inp in enumerate(node.input):
+            if inp is None or (isinstance(inp, str) and inp.strip() == ""):
+                print(f"[Node {i} - {node.name or node.op_type}] input[{idx}] is empty or None!")
 
 def onnx_to_tflite(input_onnx, output_tflite):
     if not os.path.exists(input_onnx):
@@ -157,7 +161,7 @@ def onnx_to_tflite(input_onnx, output_tflite):
     print(f"Loading ONNX model: {input_onnx}")
     model = onnx.load(input_onnx)
 
-    # Minimal fix: check for None attributes deeply before conversion
+    print("Inspecting ONNX nodes for None attributes or inputs...")
     check_none_attributes(model)
 
     print("Patching ONNX model...")
