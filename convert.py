@@ -1,12 +1,14 @@
-# convert.py
+#!/usr/bin/env python3
+import os
 import sys
+import json
 import onnx
-from onnx import helper, TensorProto
+from onnx import helper, TensorProto, numpy_helper
 from onnx_tf.backend import prepare
 import tensorflow as tf
-import json
 from typing import List, Dict, Any
 
+# ---------- Cleaning utilities ----------
 def clean_onnx_model(model: onnx.ModelProto) -> None:
     """Fix many common None/missing-attribute issues in-place."""
     for node in model.graph.node:
@@ -64,6 +66,7 @@ def clean_onnx_model(model: onnx.ModelProto) -> None:
             if outp is None:
                 node.output[i] = ""
 
+# ---------- Diagnostics ----------
 def gather_graph_names(model: onnx.ModelProto) -> set:
     names = set()
     for init in model.graph.initializer:
@@ -74,7 +77,6 @@ def gather_graph_names(model: onnx.ModelProto) -> set:
         names.add(inp.name)
     for out in model.graph.output:
         names.add(out.name)
-    # also add nodes' outputs to set (names created by nodes)
     for node in model.graph.node:
         for out in node.output:
             if out:
@@ -82,40 +84,41 @@ def gather_graph_names(model: onnx.ModelProto) -> set:
     return names
 
 def diagnose_model(model: onnx.ModelProto) -> List[Dict[str, Any]]:
-    """Produce a list of suspicious nodes (missing attrs/inputs/None fields)."""
     issues = []
     present_names = gather_graph_names(model)
-
     for idx, node in enumerate(model.graph.node):
         node_issues = []
-        # Check attributes for None-containing fields
+        # Attributes checks
         for attr in node.attribute:
-            # ListFields returns (field_descriptor, value)
-            for fd, value in attr.ListFields():
-                if value is None:
-                    node_issues.append({
-                        "type": "attr_field_none",
-                        "attr_name": getattr(attr, "name", "<unknown>"),
-                        "field": fd.name
-                    })
-                elif isinstance(value, (list, tuple)):
-                    if any(v is None for v in value):
-                        node_issues.append({
-                            "type": "attr_list_contains_none",
-                            "attr_name": getattr(attr, "name", "<unknown>"),
-                            "field": fd.name
-                        })
+            # Use reflection to find lists with None items
+            if hasattr(attr, "ints"):
+                if attr.ints is None:
+                    node_issues.append({"type": "attr_none", "field": "ints", "attr_name": getattr(attr, "name", None)})
+                elif any(i is None for i in attr.ints):
+                    node_issues.append({"type": "attr_list_contains_none", "field": "ints", "attr_name": getattr(attr, "name", None)})
+            if hasattr(attr, "floats"):
+                if attr.floats is None:
+                    node_issues.append({"type": "attr_none", "field": "floats", "attr_name": getattr(attr, "name", None)})
+                elif any(f is None for f in attr.floats):
+                    node_issues.append({"type": "attr_list_contains_none", "field": "floats", "attr_name": getattr(attr, "name", None)})
+            if hasattr(attr, "strings"):
+                if attr.strings is None:
+                    node_issues.append({"type": "attr_none", "field": "strings", "attr_name": getattr(attr, "name", None)})
+                elif any(s is None for s in attr.strings):
+                    node_issues.append({"type": "attr_list_contains_none", "field": "strings", "attr_name": getattr(attr, "name", None)})
+            if hasattr(attr, "s") and attr.s is None:
+                node_issues.append({"type": "attr_none", "field": "s", "attr_name": getattr(attr, "name", None)})
 
-        # Check inputs referencing missing names
+        # Missing inputs referencing names not present in graph
         for inp in node.input:
             if inp and inp not in present_names:
                 node_issues.append({"type": "missing_input", "input_name": inp})
 
-        # Check if op-specific required attrs obviously missing
+        # Required op attrs
         if node.op_type == "Cast" and not any(getattr(a, "name", None) == "to" for a in node.attribute):
-            node_issues.append({"type": "missing_required_attr", "attr": "to", "op": "Cast"})
+            node_issues.append({"type": "missing_required_attr", "op": "Cast", "attr": "to"})
         if node.op_type == "Concat" and not any(getattr(a, "name", None) == "axis" for a in node.attribute):
-            node_issues.append({"type": "missing_required_attr", "attr": "axis", "op": "Concat"})
+            node_issues.append({"type": "missing_required_attr", "op": "Concat", "attr": "axis"})
 
         if node_issues:
             issues.append({
@@ -136,16 +139,60 @@ def save_diagnostics(issues: List[Dict[str, Any]], filename: str = "diagnostics.
         f.write(json.dumps(issues, indent=2, ensure_ascii=False))
     print(f"Diagnostics written to {filename}")
 
-def main():
-    in_file = "model_simplified.onnx"
-    cleaned_out = "model_cleaned.onnx"
-    print("Loading simplified ONNX model...")
-    model = onnx.load(in_file)
+# ---------- Auto-fix (optional & heuristic) ----------
+def auto_fix_issues(model: onnx.ModelProto, issues: List[Dict[str, Any]]) -> int:
+    """
+    Heuristically patch missing_input issues by adding small dummy initializers
+    and replacing missing input names with the new initializer names.
+    Returns number of dummy initializers added.
+    WARNING: this may change model semantics; use only for testing/unblocking.
+    """
+    present = gather_graph_names(model)
+    added = 0
+    for it in issues:
+        for iss in it["issues"]:
+            if iss["type"] == "missing_input":
+                missing_name = iss["input_name"]
+                # if a dummy already created with this missing_name, skip
+                # create a unique dummy name
+                dummy_name = f"__onnx_dummy_{added}"
+                # create a tiny tensor (scalar float)
+                arr = numpy_helper.from_array((0.0).astype("float32") if hasattr(__import__("numpy"), "float32") else (0.0), name=dummy_name)
+                # fallback safe creation if numpy_helper fails:
+                try:
+                    import numpy as _np
+                    arr = numpy_helper.from_array(_np.array([0.0], dtype=_np.float32), name=dummy_name)
+                    model.graph.initializer.append(arr)
+                except Exception:
+                    # as last resort add a TensorProto manually (1 element float)
+                    t = helper.make_tensor(name=dummy_name, data_type=TensorProto.FLOAT, dims=[1], vals=[0.0])
+                    model.graph.initializer.append(t)
+                # also add a graph input so name appears in gather_graph_names
+                vi = helper.make_tensor_value_info(dummy_name, TensorProto.FLOAT, [1])
+                model.graph.input.append(vi)
 
-    print("Cleaning ONNX model attributes...")
+                # replace occurrences in node inputs
+                node = model.graph.node[it["index"]]
+                for i, inp in enumerate(node.input):
+                    if inp == missing_name:
+                        node.input[i] = dummy_name
+
+                added += 1
+    return added
+
+# ---------- Main flow ----------
+def main():
+    infile = os.environ.get("INPUT_ONNX", "model_simplified.onnx")
+    cleaned_out = "model_cleaned.onnx"
+    auto_fix = os.environ.get("AUTO_FIX", "0") in ("1", "true", "True")
+
+    print("Loading ONNX:", infile)
+    model = onnx.load(infile)
+
+    print("Running initial clean...")
     clean_onnx_model(model)
 
-    print(f"Saving cleaned ONNX -> {cleaned_out}")
+    print("Saving cleaned ONNX ->", cleaned_out)
     onnx.save(model, cleaned_out)
 
     print("Running ONNX checker...")
@@ -154,36 +201,53 @@ def main():
         print("ONNX checker: model is valid.")
     except Exception as e:
         print("ONNX checker failed:", e)
-        print("Running diagnostics to find suspicious nodes...")
         issues = diagnose_model(model)
         save_diagnostics(issues)
-        print("Model failed validation after cleaning. See diagnostics.txt for details.")
+        # print top issues to console
+        print("--- Top diagnostics (first 20) ---")
+        for idx, it in enumerate(issues[:20]):
+            print(f"[{idx}] node #{it['index']} name='{it['name']}' op={it['op_type']} issues={it['issues']}")
         sys.exit(1)
 
-    # Convert with onnx-tf
+    # Try conversion
     try:
-        print("Converting ONNX to TensorFlow (onnx-tf)...")
+        print("Converting ONNX -> TensorFlow (onnx-tf)...")
         tf_rep = prepare(model, strict=False)
         saved_model_dir = "saved_model"
-        print(f"Exporting TensorFlow SavedModel to '{saved_model_dir}'...")
+        print("Exporting SavedModel:", saved_model_dir)
         tf_rep.export_graph(saved_model_dir)
     except Exception as e:
         print("ONNX->TensorFlow conversion failed:", e)
-        print("Running diagnostics to find suspicious nodes...")
+        # run diagnostics
         issues = diagnose_model(model)
         save_diagnostics(issues)
-        print("Conversion aborted. See diagnostics.txt for suspected nodes.")
-        sys.exit(1)
+        print("--- Top diagnostics (first 50) ---")
+        for idx, it in enumerate(issues[:50]):
+            print(f"[{idx}] node #{it['index']} name='{it['name']}' op={it['op_type']} issues={it['issues']}")
+        if auto_fix and issues:
+            print("AUTO_FIX enabled — attempting heuristic fixes (may alter semantics)")
+            added = auto_fix_issues(model, issues)
+            print(f"Added {added} dummy initializer(s). Saving to {cleaned_out} and retrying conversion.")
+            onnx.save(model, cleaned_out)
+            try:
+                tf_rep = prepare(model, strict=False)
+                tf_rep.export_graph("saved_model")
+            except Exception as e2:
+                print("Retry after auto-fix still failed:", e2)
+                sys.exit(1)
+        else:
+            print("To try automatic fixes set environment AUTO_FIX=1 and re-run (risky).")
+            sys.exit(1)
 
-    # Convert to TFLite
+    # Convert SavedModel -> TFLite
     try:
-        print("Converting SavedModel to TFLite...")
-        converter = tf.lite.TFLiteConverter.from_saved_model(saved_model_dir)
+        print("Converting SavedModel -> TFLite...")
+        tflite_out = "model.tflite"
+        converter = tf.lite.TFLiteConverter.from_saved_model("saved_model")
         tflite_model = converter.convert()
-        output_file = "model.tflite"
-        with open(output_file, "wb") as f:
+        with open(tflite_out, "wb") as f:
             f.write(tflite_model)
-        print(f"Saved TFLite model -> {output_file}")
+        print("Wrote", tflite_out)
     except Exception as e:
         print("SavedModel -> TFLite conversion failed:", e)
         sys.exit(1)
