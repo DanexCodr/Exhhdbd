@@ -258,12 +258,30 @@ def fix_dynamic_dims(model):
         except Exception:
             continue
 
+def downgrade_unsqueeze_nodes(model):
+    for node in model.graph.node:
+        if node.op_type == "Unsqueeze":
+            # Remove axes input if present (v13)
+            if len(node.input) > 1:
+                # axes input is second input; remove it to downgrade to v11 style
+                del node.input[1:]
+            # Remove axes input attribute if present (just in case)
+            node.attribute[:] = [attr for attr in node.attribute if attr.name != 'axes']
+            # Set axes attribute to default [0] or keep your logic
+            node.attribute.append(helper.make_attribute("axes", [0]))
 
+    # Also, forcibly set opset version to 11 for ai.onnx domain
+    for opset in model.opset_import:
+        if opset.domain == '' or opset.domain == 'ai.onnx':
+           opset.version = 11
+
+                       
 def autopatch_model(model):
     fix_reduce_nodes(model)
     fix_cast_nodes(model)
     fix_concat_nodes(model)
     fix_slice_nodes(model)
+    downgrade_unsqueeze_nodes(model);
     fix_unsqueeze_nodes(model)
     # run cleaning after other smaller fixes
     clean_node_attributes_and_inputs(model)
