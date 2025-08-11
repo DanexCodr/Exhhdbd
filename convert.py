@@ -98,23 +98,22 @@ def fix_slice_nodes(model):
             # create unique initializer names and append them as inputs in the conventional order:
             # inputs for Slice (opset>=10): data, starts, ends, axes (optional), steps (optional)
             # Keep only the first input (data tensor)
-data_input = node.input[0]
-node.input[:] = [data_input]
+            data_input = node.input[0]
+            node.input[:] = [data_input]
 
-# Now append starts, ends, axes, steps
-for name_base, vals in (("starts", starts), ("ends", ends), ("axes", axes), ("steps", steps)):
-    const_name = unique_name(f"{node.name or 'Slice'}_{name_base}_const")
-    tensor = helper.make_tensor(
-        name=const_name,
-        data_type=INT64,
-        dims=[len(vals)] if len(vals) > 0 else [0],
-        vals=vals
-    )
-    append_initializer_if_missing(model, tensor)
-    node.input.append(const_name)
-    print(f"Fixing {node.name or 'Slice'}: adding {name_base}={vals} as input tensor named {const_name}")
-                print(f"Fixing {node.name or 'Slice'}: adding {name_base}={vals} as input tensor named {const_name}")
-
+            # Now append starts, ends, axes, steps
+            for name_base, vals in (("starts", starts), ("ends", ends), ("axes", axes), ("steps", steps)):
+              const_name = unique_name(f"{node.name or 'Slice'}_{name_base}_const")
+              tensor = helper.make_tensor(
+                name=const_name,
+                data_type=INT64,
+                dims=[len(vals)] if len(vals) > 0 else [0],
+                vals=vals
+             )
+             append_initializer_if_missing(model, tensor)
+             node.input.append(const_name)
+             print(f"Fixing {node.name or 'Slice'}: adding {name_base}={vals} as input tensor named {const_name}")
+                
             # remove attributes safely
             del node.attribute[:]
         else:
