@@ -1,4 +1,4 @@
-name: Quantize ONNX Model
+name: Quantize ONNX Model with quantisize.py
 
 on:
   push:
@@ -14,14 +14,7 @@ jobs:
 
       - name: Download model.onnx from Release asset
         run: |
-          echo "Downloading from fixed URL"
           curl -L -o model.onnx "https://github.com/DanexCodr/Exhhdbd/releases/download/Durhrj/model.onnx"
-
-      - name: Verify downloaded ONNX file
-        run: |
-          ls -lh model.onnx
-          onnxruntime_test=$(file model.onnx || true)
-          echo "ONNX file type: $onnxruntime_test"
 
       - name: Setup Python
         uses: actions/setup-python@v4
@@ -33,54 +26,15 @@ jobs:
           python -m pip install --upgrade pip
           pip install onnx onnxruntime onnxruntime-tools
 
-      - name: Quantize ONNX model
+      - name: Run quantisize.py script
         run: |
-          python - <<'EOF'
-          from onnxruntime.quantization import quantize_dynamic, QuantType
-          import onnx
-          model_fp32 = "model.onnx"
-          model_quant = "model_quant.onnx"
-          quantize_dynamic(model_fp32, model_quant, weight_type=QuantType.QInt8)
-          print(f"Quantization complete: {model_quant}")
-          EOF
+          python quantisize.py model.onnx model_quant.onnx
 
-      - name: Verify quantized ONNX model
-        run: |
-          ls -lh model_quant.onnx
+      - name: Verify quantized model
+        run: ls -lh model_quant.onnx
 
-      - name: Upload quantized ONNX model
+      - name: Upload quantized model
         uses: actions/upload-artifact@v4
         with:
-          name: model-quantized
+          name: quantized-model
           path: model_quant.onnx
-      - name: Echo ONNX model inspection commands
-        run: |
-          echo "import onnx"
-          echo "model = onnx.load('model_simplified.onnx')"
-          echo "for node in model.graph.node:"
-          echo "    for attr in node.attribute:"
-          echo "        if attr is None:"
-          echo "            print('Node with None attribute:', node)"
-
-      - name: Run conversion script
-        run: |
-          python convert.py model_simplified.onnx model.tflite
-
-      - name: Verify TFLite output presence
-        run: |
-          echo "Current directory: $(pwd)"
-          echo "Listing files:"
-          ls -la
-          if [ ! -f model.tflite ]; then
-            echo "Error: model.tflite not found!"
-            exit 1
-          else
-            echo "model.tflite found! Size:"
-            ls -lh model.tflite
-          fi
-
-      - name: Upload TFLite artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: model-tflite
-          path: model.tflite
