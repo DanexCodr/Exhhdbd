@@ -28,13 +28,53 @@ def clean_onnx_model(model):
                 (not hasattr(attr, 'strings') or len(attr.strings) > 0) or
                 (hasattr(attr, 's') and attr.s != b'')):
                 new_attrs.append(attr)
-            # else drop empty attribute
 
-        # Assign cleaned attributes back
+        # Replace attributes with cleaned list
         del node.attribute[:]
         node.attribute.extend(new_attrs)
 
-        # Add required 'to' attribute for Cast nodes if missing
+        # Add missing 'to' attribute for Cast nodes if absent
+        if node.op_type == "Cast":
+            if not any(attr.name == "to" for attr in node.attribute):
+                to_attr = helper.make_attribute("to", TensorProto.FLOAT)
+                node.attribute.append(to_attr)
+
+        # Add missing 'axis' attribute for Concat nodes if absent
+        if node.op_type == "Concat":
+            if not any(attr.name == "axis" for attr in node.attribute):
+                axis_attr = helper.make_attribute("axis", 0)  # default axis=0
+                node.attribute.append(axis_attr)
+
+def main():
+    print("Loading simplified ONNX model...")
+    onnx_model = onnx.load("model_simplified.onnx")
+
+    print("Cleaning ONNX model attributes...")
+    clean_onnx_model(onnx_model)
+
+    print("Checking model validity...")
+    onnx.checker.check_model(onnx_model)
+
+    print("Converting ONNX to TensorFlow...")
+    tf_rep = prepare(onnx_model, strict=False)
+
+    saved_model_dir = "saved_model"
+    print(f"Exporting TensorFlow SavedModel to '{saved_model_dir}'...")
+    tf_rep.export_graph(saved_model_dir)
+
+    print("Converting SavedModel to TFLite...")
+    converter = tf.lite.TFLiteConverter.from_saved_model(saved_model_dir)
+    tflite_model = converter.convert()
+
+    output_file = "model.tflite"
+    print(f"Saving TFLite model to '{output_file}'...")
+    with open(output_file, "wb") as f:
+        f.write(tflite_model)
+
+    print("Conversion complete!")
+
+if __name__ == "__main__":
+    main()        # Add required 'to' attribute for Cast nodes if missing
         if node.op_type == "Cast":
             has_to = any(attr.name == "to" for attr in node.attribute)
             if not has_to:
