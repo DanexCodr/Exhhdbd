@@ -43,18 +43,15 @@ def find_value_info_shape(model, tensor_name):
     return None
 
 def infer_reduce_axes_from_input_shape(model, node):
-    # Try to get input 0 shape and use last axis
     if len(node.input) == 0:
-        return None
+        return [1]  # fallback axis
     inname = node.input[0]
     shape = find_value_info_shape(model, inname)
     if shape:
-        # prefer last dimension only (typical for LayerNorm)
         for i in range(len(shape)-1, -1, -1):
             if shape[i] is not None:
                 return [i]
-        return [max(0, len(shape)-1)]
-    # fallback axis
+        return [len(shape)-1]
     return [1]
 
 def ensure_common_defaults(node, opset_v, model):
@@ -67,27 +64,6 @@ def ensure_common_defaults(node, opset_v, model):
     if node.op_type == "Concat":
         if not any(safe_name(a) == "axis" for a in node.attribute):
             node.attribute.append(helper.make_attribute("axis", 1))
-
-    # Reduce* -> keepdims + axes default (infer if missing)
-    if node.op_type.startswith("Reduce"):
-        if not any(safe_name(a) == "keepdims" for a in node.attribute):
-            node.attribute.append(helper.make_attribute("keepdims", 1))
-        # if axes attribute missing or empty, inject inferred axes
-        has_axes_attr = any(safe_name(a) == "axes" for a in node.attribute)
-        if not has_axes_attr:
-            axes = infer_reduce_axes_from_input_shape(model, node) or []
-            node.attribute.append(helper.make_attribute("axes", axes))
-        else:
-            # if attribute exists but has empty ints, replace with inferred if necessary
-            for a in node.attribute:
-                if safe_name(a) == "axes":
-                    ints = list(a.ints) if hasattr(a, "ints") else []
-                    if len(ints) == 0:
-                        axes = infer_reduce_axes_from_input_shape(model, node) or []
-                        # replace attribute
-                        node.attribute.remove(a)
-                        node.attribute.append(helper.make_attribute("axes", axes))
-                    break
 
     # Slice: opset-aware (older opsets used attributes)
     if node.op_type == "Slice":
@@ -171,7 +147,6 @@ def inject_dummy_init(model, name, dtype=ONNX_FLOAT):
 
 def minimal_for_node(model, idx):
     node = model.graph.node[idx]
-    # copy node only (not references) to isolate
     inits = {i.name: i for i in model.graph.initializer}
     new_inits = []
     new_inputs = []
@@ -224,59 +199,37 @@ def isolate_failing_node(model, max_nodes=200):
     print("No failing single-node repro found.")
     return None
 
-def fix_reduce_axes_initializers(model):
-    """
-    For Reduce* nodes, if axes are supplied as an initializer (input[1]) but that initializer is empty
-    or invalid, replace with an int64 initializer containing the inferred axes.
-    Also ensure axes attribute exists and is sane.
-    """
-    init_map = {init.name: init for init in model.graph.initializer}
+# === New fix for Reduce* nodes ===
+def fix_reduce_nodes(model):
     changed = 0
     for node in model.graph.node:
         if not node.op_type.startswith("Reduce"):
             continue
 
-        # If axes provided as initializer (input[1])
-        if len(node.input) >= 2:
-            axes_input = node.input[1]
-            if axes_input in init_map:
-                init = init_map[axes_input]
-                try:
-                    arr = numpy_helper.to_array(init)
-                except Exception:
-                    arr = None
-                # arr could be empty or contain None-like; replace if len 0
-                if arr is None or arr.size == 0:
-                    inferred = infer_reduce_axes_from_input_shape(model, node) or []
-                    if len(inferred) == 0:
-                        # fallback to [1]
-                        inferred = [1]
-                    # create new initializer int64
-                    new_init = numpy_helper.from_array(np.array(inferred, dtype=np.int64), axes_input)
-                    # replace initializer in model.graph.initializer
-                    # remove old initializer
-                    model.graph.initializer[:] = [i for i in model.graph.initializer if i.name != axes_input]
-                    model.graph.initializer.append(new_init)
-                    changed += 1
-        # Also ensure axes attribute present and non-empty
-        has_axes_attr = any(safe_name(a) == "axes" for a in node.attribute)
-        if not has_axes_attr:
-            inferred = infer_reduce_axes_from_input_shape(model, node) or []
-            node.attribute.append(helper.make_attribute("axes", inferred))
+        # Fix keepdims attribute if missing
+        if not any(a.name == "keepdims" for a in node.attribute):
+            node.attribute.append(helper.make_attribute("keepdims", 1))
+            changed += 1
+
+        # Fix axes attribute if missing or empty
+        axes_attr = None
+        for a in node.attribute:
+            if a.name == "axes":
+                axes_attr = a
+                break
+        inferred_axes = infer_reduce_axes_from_input_shape(model, node)
+        if axes_attr is None:
+            node.attribute.append(helper.make_attribute("axes", inferred_axes))
             changed += 1
         else:
-            for a in list(node.attribute):
-                if safe_name(a) == "axes":
-                    ints = list(a.ints) if hasattr(a, "ints") else []
-                    if len(ints) == 0:
-                        inferred = infer_reduce_axes_from_input_shape(model, node) or []
-                        node.attribute.remove(a)
-                        node.attribute.append(helper.make_attribute("axes", inferred))
-                        changed += 1
-                    break
-    if changed:
-        print(f"Patched {changed} Reduce* axes initializers/attributes.")
-    return changed
+            if len(axes_attr.ints) == 0:
+                node.attribute.remove(axes_attr)
+                node.attribute.append(helper.make_attribute("axes", inferred_axes))
+                changed += 1
+    if changed > 0:
+        print(f"Patched {changed} Reduce* nodes with default keepdims and axes.")
+    else:
+        print("No Reduce* nodes needed patching.")
 
 def main():
     AUTO_FIX = os.environ.get("AUTO_FIX", "0") in ("1","true","True")
@@ -285,7 +238,6 @@ def main():
 
     model = onnx.load(infile)
 
-    # Try to infer shapes
     try:
         print("Running shape inference...")
         model = onnx.shape_inference.infer_shapes(model)
@@ -298,8 +250,8 @@ def main():
     print("Cleaning node attributes and injecting defaults (opset-aware)...")
     clean_node_attributes(model, opset_v)
 
-    # Patch Reduce initializers/attributes (the main problem left)
-    fix_reduce_axes_initializers(model)
+    # <<< Here: apply the new fix to Reduce nodes
+    fix_reduce_nodes(model)
 
     added = add_value_info_for_missing_outputs(model)
     if added:
@@ -309,7 +261,6 @@ def main():
     onnx.save(model, cleaned)
     print("Saved cleaned model as", cleaned)
 
-    # sanity check
     try:
         print("Running ONNX checker...")
         onnx.checker.check_model(model)
@@ -319,7 +270,6 @@ def main():
         open("diagnostics.txt", "w").write(str(e))
         sys.exit(1)
 
-    # missing inputs
     missing = find_missing_inputs(model)
     if missing:
         print("Missing inputs referenced by nodes:", missing)
@@ -335,7 +285,6 @@ def main():
     else:
         print("No missing inputs detected.")
 
-    # Try conversion
     try:
         print("Preparing onnx-tf representation (prepare)...")
         tf_rep = prepare(model, strict=False)
@@ -351,7 +300,6 @@ def main():
             print("No isolation info; see error.txt")
         sys.exit(1)
 
-    # Convert to TFLite
     try:
         print("Converting SavedModel to TFLite...")
         converter = tf.lite.TFLiteConverter.from_saved_model("saved_model")
