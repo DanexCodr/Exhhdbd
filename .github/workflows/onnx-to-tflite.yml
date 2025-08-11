@@ -14,8 +14,8 @@ jobs:
 
       - name: Download model.onnx from Release asset
         run: |
-         echo "Downloading from fixed URL"
-         curl -L -o model.onnx "https://github.com/DanexCodr/Exhhdbd/releases/download/Durhrj/model.onnx"
+          echo "Downloading from fixed URL"
+          curl -L -o model.onnx "https://github.com/DanexCodr/Exhhdbd/releases/download/Durhrj/model.onnx"
     
       - name: Setup Python
         uses: actions/setup-python@v4
@@ -24,7 +24,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install onnx onnx-tf tensorflow
+          pip install onnx onnx-tf tensorflow tensorflow-probability
 
       - name: Run conversion script
         run: |
@@ -34,6 +34,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: model-tflite
-          path: model.tflite        
-          run: |
-           python convert.py
+          path: model.tflite
