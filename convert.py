@@ -313,17 +313,69 @@ def check_none_attributes(model):
     if not found:
         print("No None attributes/inputs found in model nodes (basic check).")
 
+def ensure_unsqueeze_axes_inputs(model):
+    """
+    Ensure Unsqueeze nodes that require an 'axes' input actually have one.
+    If an Unsqueeze node has only the data input, append an INT64 constant
+    initializer with value [0] and add it to node.input.
+    """
+    for node in model.graph.node:
+        if node.op_type != "Unsqueeze":
+            continue
+
+        # if axes already present as a second input, skip
+        if len(node.input) > 1 and node.input[1] not in (None, ""):
+            continue
+
+        # If there's an 'axes' attribute already, convert attr -> input (create const)
+        # or if no attr, create a default [0]
+        axes_vals = None
+        for a in node.attribute:
+            if getattr(a, "name", None) == "axes":
+                # attribute may be empty or a list
+                try:
+                    axes_vals = list(a.ints) if hasattr(a, "ints") else None
+                except Exception:
+                    axes_vals = None
+                break
+
+        if axes_vals is None:
+            axes_vals = [0]  # conservative default
+
+        # create a unique initializer name and append if missing
+        const_name = unique_name((node.name or "Unsqueeze") + "_axes_const")
+        axes_tensor = helper.make_tensor(
+            name=const_name,
+            data_type=INT64,
+            dims=[len(axes_vals)],
+            vals=axes_vals
+        )
+        append_initializer_if_missing(model, axes_tensor)
+
+        # append the axes input to the node (keep data input first)
+        if len(node.input) == 0:
+            print(f"Warning: Unsqueeze node '{node.name or node.op_type}' has no inputs; skipping")
+            continue
+        # ensure we keep data input and then axes
+        data = node.input[0]
+        node.input[:] = [data, const_name]
+
+        # remove any 'axes' attribute to avoid ambiguity
+        node.attribute[:] = [attr for attr in node.attribute if getattr(attr, "name", None) != "axes"]
+
+        print(f"Injected axes tensor {const_name}={axes_vals} into Unsqueeze node '{node.name or node.op_type}'")
 
 def autopatch_model(model):
     fix_reduce_nodes(model)
     fix_cast_nodes(model)
     fix_concat_nodes(model)
     fix_slice_nodes(model)
-    # Downgrade unsqueeze to attribute-style (v11) to avoid missing v13 handler issues
+    # Downgrade v13-style unsqueeze if you still do that
     downgrade_unsqueeze_nodes(model)
+    # Ensure any Unsqueeze nodes missing axes input get one
+    ensure_unsqueeze_axes_inputs(model)
     # run cleaning after other smaller fixes
     clean_node_attributes_and_inputs(model)
-
 
 def onnx_to_tflite(input_onnx, output_tflite):
     if not os.path.exists(input_onnx):
