@@ -2,7 +2,7 @@
 import os
 import sys
 import onnx
-from onnx import helper
+from onnx import helper, shape_inference
 import tensorflow as tf
 from onnx_tf.backend import prepare
 import uuid
@@ -109,7 +109,6 @@ def fix_reduce_nodes(model):
 
 def clean_node_attributes_and_inputs(model):
     for node in model.graph.node:
-        # Clean attributes: remove those with None or fields containing None
         new_attrs = []
         for attr in node.attribute:
             if attr is None:
@@ -119,26 +118,66 @@ def clean_node_attributes_and_inputs(model):
                    (hasattr(field_value, '__iter__') and
                     any(v is None for v in field_value if v is not None))
                    for _, field_value in fields):
-                # Skip attribute with None inside
                 continue
             new_attrs.append(attr)
         del node.attribute[:]
         node.attribute.extend(new_attrs)
 
-        # Clean inputs: remove empty or None inputs
         new_inputs = [i for i in node.input if i and i.strip() != ""]
         if len(new_inputs) != len(node.input):
             print(f"Cleaned empty inputs from node '{node.name or node.op_type}'")
         del node.input[:]
         node.input.extend(new_inputs)
-        
+
+def fix_dynamic_dims(model):
+    for input_tensor in model.graph.input:
+        shape = input_tensor.type.tensor_type.shape
+        for dim in shape.dim:
+            if dim.dim_value <= 0:  # Dynamic dimension
+                dim.dim_value = 1  # Set to fixed value
+                print(f"Fixed dynamic dimension in input {input_tensor.name} to 1")
+
+def replace_shape_nodes(model):
+    shape_map = {}
+    for tensor in model.graph.value_info:
+        shape = tensor.type.tensor_type.shape
+        shape_dims = [dim.dim_value if dim.dim_value > 0 else 1 for dim in shape.dim]
+        shape_map[tensor.name] = shape_dims
+
+    new_nodes = []
+    for node in model.graph.node:
+        if node.op_type == "Shape":
+            input_name = node.input[0]
+            if input_name in shape_map:
+                shape_val = shape_map[input_name]
+                const_name = node.output[0] + "_const"
+                tensor = helper.make_tensor(
+                    name=const_name,
+                    data_type=INT64,
+                    dims=[len(shape_val)],
+                    vals=shape_val
+                )
+                const_node = helper.make_node(
+                    'Constant',
+                    inputs=[],
+                    outputs=node.output,
+                    name=node.name + "_replaced" if node.name else None,
+                    value=tensor
+                )
+                new_nodes.append(const_node)
+                print(f"Replaced Shape node {node.name} with constant")
+                continue
+        new_nodes.append(node)
+    model.graph.node.Clear()
+    model.graph.node.extend(new_nodes)
+
 def autopatch_model(model):
     fix_reduce_nodes(model)
     fix_cast_nodes(model)
     fix_concat_nodes(model)
     fix_slice_nodes(model)
     fix_unsqueeze_nodes(model)
-    clean_node_attributes_and_inputs(model)  # add this at the end to fix any None attribute fields
+    clean_node_attributes_and_inputs(model)
 
 def check_none_attributes(model):
     for i, node in enumerate(model.graph.node):
@@ -161,21 +200,42 @@ def onnx_to_tflite(input_onnx, output_tflite):
     print(f"Loading ONNX model: {input_onnx}")
     model = onnx.load(input_onnx)
 
-    print("Inspecting ONNX nodes for None attributes or inputs...")
-    check_none_attributes(model)
+    print("Running shape inference...")
+    try:
+        model = shape_inference.infer_shapes(model)
+    except Exception as e:
+        print(f"Shape inference failed: {e}")
+
+    print("Fixing dynamic dimensions...")
+    fix_dynamic_dims(model)
+
+    print("Replacing Shape nodes...")
+    try:
+        model = shape_inference.infer_shapes(model)
+        replace_shape_nodes(model)
+    except Exception as e:
+        print(f"Failed to replace Shape nodes: {e}")
 
     print("Patching ONNX model...")
     autopatch_model(model)
 
-    # Save patched ONNX temporarily
+    print("Running final shape inference...")
+    try:
+        model = shape_inference.infer_shapes(model)
+    except Exception as e:
+        print(f"Final shape inference failed: {e}")
+
     with tempfile.NamedTemporaryFile(suffix=".onnx", delete=False) as tmp_file:
         tmp_path = tmp_file.name
         onnx.save(model, tmp_path)
 
     print("Converting patched ONNX to TensorFlow...")
-    tf_rep = prepare(model, strict=False)
+    try:
+        tf_rep = prepare(model, strict=False)
+    except Exception as e:
+        print(f"ONNX to TF conversion failed: {e}")
+        raise
 
-    # Use temp directory for TF SavedModel
     tmp_tf_dir = tempfile.mkdtemp(prefix="tf_model_")
     try:
         tf_rep.export_graph(tmp_tf_dir)
@@ -188,7 +248,6 @@ def onnx_to_tflite(input_onnx, output_tflite):
 
         print(f"✅ TFLite model saved to: {output_tflite}")
     finally:
-        # Clean temp files
         os.remove(tmp_path)
         shutil.rmtree(tmp_tf_dir)
 
@@ -204,6 +263,7 @@ def main():
         onnx_to_tflite(input_onnx, output_tflite)
     except Exception as e:
         print("Error during conversion:", e)
+        sys.exit(1)
 
 if __name__ == "__main__":
     main()
