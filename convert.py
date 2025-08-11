@@ -10,40 +10,46 @@ def clean_onnx_model(model):
             if attr is None:
                 continue
 
-            # Fix repeated fields to empty lists if None
-            if hasattr(attr, 'ints') and attr.ints is None:
-                attr.ints[:] = []
-            if hasattr(attr, 'floats') and attr.floats is None:
-                attr.floats[:] = []
-            if hasattr(attr, 'strings') and attr.strings is None:
-                attr.strings[:] = []
+            if hasattr(attr, 'ints') and (attr.ints is None or any(i is None for i in attr.ints)):
+                attr.ints[:] = [i if i is not None else 0 for i in attr.ints] if attr.ints else []
+            if hasattr(attr, 'floats') and (attr.floats is None or any(f is None for f in attr.floats)):
+                attr.floats[:] = [f if f is not None else 0.0 for f in attr.floats] if attr.floats else []
+            if hasattr(attr, 'strings') and (attr.strings is None or any(s is None for s in attr.strings)):
+                attr.strings[:] = [s if s is not None else b'' for s in attr.strings] if attr.strings else []
 
-            # Fix scalar bytes string field
             if hasattr(attr, 's') and attr.s is None:
                 attr.s = b''
 
-            # Keep only attributes with meaningful data
             if ((not hasattr(attr, 'ints') or len(attr.ints) > 0) or
                 (not hasattr(attr, 'floats') or len(attr.floats) > 0) or
                 (not hasattr(attr, 'strings') or len(attr.strings) > 0) or
                 (hasattr(attr, 's') and attr.s != b'')):
                 new_attrs.append(attr)
 
-        # Replace attributes with cleaned list
         del node.attribute[:]
         node.attribute.extend(new_attrs)
 
-        # Add missing 'to' attribute for Cast nodes if absent
+        # Add missing 'to' attribute for Cast nodes
         if node.op_type == "Cast":
             if not any(attr.name == "to" for attr in node.attribute):
                 to_attr = helper.make_attribute("to", TensorProto.FLOAT)
                 node.attribute.append(to_attr)
 
-        # Add missing 'axis' attribute for Concat nodes if absent
+        # Add missing 'axis' attribute for Concat nodes
         if node.op_type == "Concat":
             if not any(attr.name == "axis" for attr in node.attribute):
-                axis_attr = helper.make_attribute("axis", 0)  # default axis=0
+                axis_attr = helper.make_attribute("axis", 0)
                 node.attribute.append(axis_attr)
+
+        # Fix None inputs by replacing with empty string
+        for i, inp in enumerate(node.input):
+            if inp is None:
+                node.input[i] = ""
+
+        # Fix None outputs by replacing with empty string
+        for i, outp in enumerate(node.output):
+            if outp is None:
+                node.output[i] = ""
 
 def main():
     print("Loading simplified ONNX model...")
