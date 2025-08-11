@@ -1,5 +1,3 @@
-
-
 import os, sys, json, traceback
 import onnx
 from onnx import helper, TensorProto, numpy_helper
@@ -9,14 +7,11 @@ import numpy as np
 
 ONNX_FLOAT = TensorProto.FLOAT
 ONNX_INT64 = TensorProto.INT64
-ONNX_INT32 = TensorProto.INT32
 
 def get_opset_version(model):
-    # Prefer the default-domain ('') opset import; fallback to max present
     for oi in model.opset_import:
         if oi.domain == "" or oi.domain == "ai.onnx":
             return oi.version
-    # fallback
     return max((oi.version for oi in model.opset_import), default=0)
 
 def safe_name(a): return getattr(a, "name", None)
@@ -28,10 +23,43 @@ def fix_repeated_field(attr, field_name):
             setattr(attr, field_name, [])
     return attr
 
-def ensure_common_defaults(node, opset_v):
-    """Fill common missing attributes for ops that often break onnx-tf conversion.
-       Respect opset: do NOT add old-style Slice attrs when opset >= 10.
-    """
+def find_value_info_shape(model, tensor_name):
+    # search value_info, inputs, outputs
+    for vi in list(model.graph.value_info) + list(model.graph.input) + list(model.graph.output):
+        if vi.name == tensor_name:
+            t = vi.type.tensor_type
+            shape = []
+            if t.HasField("shape"):
+                for d in t.shape.dim:
+                    if d.HasField("dim_value") and d.dim_value > 0:
+                        shape.append(int(d.dim_value))
+                    else:
+                        shape.append(None)
+            return shape
+    # check initializers
+    for init in model.graph.initializer:
+        if init.name == tensor_name:
+            return list(init.dims)
+    return None
+
+def infer_reduce_axes_from_input_shape(model, node):
+    # Try to get input 0 shape and use last axis
+    if len(node.input) == 0:
+        return None
+    inname = node.input[0]
+    shape = find_value_info_shape(model, inname)
+    if shape:
+        # prefer last dimension only (typical for LayerNorm)
+        # choose axis index of last non-None dim
+        for i in range(len(shape)-1, -1, -1):
+            if shape[i] is not None:
+                return [i]
+        # fallback: last axis index
+        return [max(0, len(shape)-1)]
+    # no shape known -> fallback to axis=1 (common for [batch, seq, dim] patterns)
+    return [1]
+
+def ensure_common_defaults(node, opset_v, model):
     # Cast -> 'to' (dtype)
     if node.op_type == "Cast":
         if not any(safe_name(a) == "to" for a in node.attribute):
@@ -42,15 +70,18 @@ def ensure_common_defaults(node, opset_v):
         if not any(safe_name(a) == "axis" for a in node.attribute):
             node.attribute.append(helper.make_attribute("axis", 1))
 
-    # Reduce* -> keepdims + axes default
+    # Reduce* -> keepdims + axes default (infer if missing)
     if node.op_type.startswith("Reduce"):
         if not any(safe_name(a) == "keepdims" for a in node.attribute):
             node.attribute.append(helper.make_attribute("keepdims", 1))
-        if not any(safe_name(a) == "axes" for a in node.attribute):
-            node.attribute.append(helper.make_attribute("axes", []))
+        has_axes = any(safe_name(a) == "axes" for a in node.attribute)
+        if not has_axes:
+            axes = infer_reduce_axes_from_input_shape(model, node)
+            if axes is None:
+                axes = []  # empty but valid
+            node.attribute.append(helper.make_attribute("axes", axes))
 
-    # Slice: **only** add attribute defaults for old opsets (<10).
-    # For opset >= 10, Slice uses inputs for starts/ends/etc — adding attributes breaks the model.
+    # Slice: opset-aware (do NOT inject starts/ends for opset >=10)
     if node.op_type == "Slice":
         if opset_v < 10:
             if not any(safe_name(a) == "starts" for a in node.attribute):
@@ -59,9 +90,6 @@ def ensure_common_defaults(node, opset_v):
                 node.attribute.append(helper.make_attribute("ends", []))
             if not any(safe_name(a) == "axes" for a in node.attribute):
                 node.attribute.append(helper.make_attribute("axes", []))
-        else:
-            # opset >= 10: do not inject starts/ends attributes
-            pass
 
 def clean_node_attributes(model, opset_v):
     for node in model.graph.node:
@@ -79,15 +107,13 @@ def clean_node_attributes(model, opset_v):
             new_attrs.append(a)
         del node.attribute[:]
         node.attribute.extend(new_attrs)
-        ensure_common_defaults(node, opset_v)
+        ensure_common_defaults(node, opset_v, model)
 
 def add_value_info_for_missing_outputs(model):
     present = {vi.name for vi in list(model.graph.value_info) + list(model.graph.input) + list(model.graph.output)}
     added = []
     for node in model.graph.node:
         dtype = ONNX_FLOAT
-        if node.op_type in ("Shape", "Range"):
-            dtype = ONNX_INT64
         for o in node.output:
             if not o:
                 continue
@@ -190,7 +216,7 @@ def isolate_failing_node(model, max_nodes=200):
     return None
 
 def main():
-    AUTO_FIX = os.environ.get("AUTO_FIX", "0") in ("1", "true", "True")
+    AUTO_FIX = os.environ.get("AUTO_FIX", "0") in ("1","true","True")
     infile = os.environ.get("INPUT_ONNX", "model_simplified.onnx")
     print("Input ONNX:", infile)
 
