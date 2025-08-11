@@ -281,8 +281,7 @@ def autopatch_model(model):
     fix_cast_nodes(model)
     fix_concat_nodes(model)
     fix_slice_nodes(model)
-    downgrade_unsqueeze_nodes(model);
-    fix_unsqueeze_nodes(model)
+    downgrade_unsqueeze_nodes(model)
     # run cleaning after other smaller fixes
     clean_node_attributes_and_inputs(model)
 
