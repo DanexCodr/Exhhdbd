@@ -46,7 +46,7 @@ jobs:
 
       - name: Run conversion script
         run: |
-          python convert.py
+          python convert.py model_simplified.onnx model.tflite
 
       - name: Verify TFLite output presence
         run: |
