@@ -372,7 +372,7 @@ def autopatch_model(model):
     fix_concat_nodes(model)
     fix_slice_nodes(model)
     # Downgrade v13-style unsqueeze if you still do that
-    downgrade_unsqueeze_nodes(model)
+    # downgrade_unsqueeze_nodes(model)
     # Ensure any Unsqueeze nodes missing axes input get one
     ensure_unsqueeze_axes_inputs(model)
     # run cleaning after other smaller fixes
