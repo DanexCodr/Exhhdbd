@@ -24,15 +24,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip uninstall -y tensorflow tensorflow-probability tensorflow-addons onnx onnx-tf
-          pip install tensorflow==2.13.0 tensorflow-probability==0.19.0 tensorflow-addons==0.20.0 onnx onnx-tf
-
-      - name: Verify package versions
-        run: |
-          python -c "import tensorflow as tf; print('TensorFlow', tf.__version__)"
-          python -c "import tensorflow_probability as tfp; print('TensorFlow Probability', tfp.__version__)"
-          python -c "import tensorflow_addons as tfa; print('TensorFlow Addons', tfa.__version__)"
-    
+          pip install --force-reinstall tensorflow==2.13.0 tensorflow-probability==0.19.0 onnx onnx-tf
       - name: Run conversion script
         run: |
           python convert.py
