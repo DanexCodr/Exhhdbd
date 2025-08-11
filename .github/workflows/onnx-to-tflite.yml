@@ -24,7 +24,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install onnx onnx-tf tensorflow tensorflow-probability
+          pip install onnx onnx-tf tensorflow tensorflow-probability[tf]
 
       - name: Run conversion script
         run: |
