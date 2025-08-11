@@ -24,8 +24,8 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install --force-reinstall tensorflow==2.13.0 tensorflow-probability==0.19.0 tensorflow-addons==0.20.0 onnx onnx-tf
-    
+          pip install --force-reinstall tensorflow==2.13.0 tensorflow-probability==0.19.0 tensorflow-addons==0.15.0 onnx onnx-tf
+          
       - name: Run conversion script
         run: |
           python convert.py
