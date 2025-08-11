@@ -434,10 +434,10 @@ def autopatch_model(model):
         print(f"fallback_unsqueeze_to_v11 failed (continuing): {e}")
 
     # Ensure any Unsqueeze nodes have axes input if some code expects it
-    try:
-        ensure_unsqueeze_axes_inputs(model)
-    except Exception as e:
-        print(f"ensure_unsqueeze_axes_inputs failed (continuing): {e}")
+    # try:
+    #    ensure_unsqueeze_axes_inputs(model)
+    # except Exception as e:
+    #    print(f"ensure_unsqueeze_axes_inputs failed (continuing): {e}")
 
     # run cleaning after other smaller fixes
     clean_node_attributes_and_inputs(model)
