@@ -107,12 +107,35 @@ def fix_reduce_nodes(model):
             if not any(getattr(a, "name", None) == "keepdims" for a in node.attribute):
                 node.attribute.append(helper.make_attribute("keepdims", 1))
 
+def clean_node_attributes(model):
+    for node in model.graph.node:
+        for attr in node.attribute:
+            # Inspect each field of the attribute
+            fields = attr.ListFields()
+            for field, value in fields:
+                if value is None:
+                    # Replace None with a default or remove attribute entirely
+                    # Since it's an int/float/list attribute, use safe defaults:
+                    if field.type == onnx.AttributeProto.INT:
+                        setattr(attr, field.name, 0)
+                    elif field.type == onnx.AttributeProto.FLOAT:
+                        setattr(attr, field.name, 0.0)
+                    elif field.type == onnx.AttributeProto.INTS:
+                        setattr(attr, field.name, [])
+                    elif field.type == onnx.AttributeProto.FLOATS:
+                        setattr(attr, field.name, [])
+                    else:
+                        # If unknown, remove attribute by clearing node.attribute list and resetting with safe defaults if needed
+                        # Or just continue for safety
+                        pass
+
 def autopatch_model(model):
     fix_reduce_nodes(model)
     fix_cast_nodes(model)
     fix_concat_nodes(model)
     fix_slice_nodes(model)
     fix_unsqueeze_nodes(model)
+    clean_node_attributes(model)  # add this at the end to fix any None attribute fields
 
 def check_none_attributes(model):
     for node in model.graph.node:
