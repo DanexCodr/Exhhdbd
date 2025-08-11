@@ -109,25 +109,38 @@ def fix_reduce_nodes(model):
 
 def clean_node_attributes(model):
     for node in model.graph.node:
+        # Filter out attributes that are None or contain None in their fields
+        new_attrs = []
         for attr in node.attribute:
-            # Inspect each field of the attribute
+            # Skip attribute if the attribute itself is None
+            if attr is None:
+                continue
+
+            # Check all fields inside attribute
             fields = attr.ListFields()
+            has_none = False
             for field, value in fields:
+                # value can be a protobuf field, check for None or empty protobuf objects
                 if value is None:
-                    # Replace None with a default or remove attribute entirely
-                    # Since it's an int/float/list attribute, use safe defaults:
-                    if field.type == onnx.AttributeProto.INT:
-                        setattr(attr, field.name, 0)
-                    elif field.type == onnx.AttributeProto.FLOAT:
-                        setattr(attr, field.name, 0.0)
-                    elif field.type == onnx.AttributeProto.INTS:
-                        setattr(attr, field.name, [])
-                    elif field.type == onnx.AttributeProto.FLOATS:
-                        setattr(attr, field.name, [])
-                    else:
-                        # If unknown, remove attribute by clearing node.attribute list and resetting with safe defaults if needed
-                        # Or just continue for safety
-                        pass
+                    has_none = True
+                    break
+                # For repeated fields (lists), check elements for None
+                if hasattr(value, '__iter__') and not isinstance(value, (str, bytes)):
+                    for v in value:
+                        if v is None:
+                            has_none = True
+                            break
+                    if has_none:
+                        break
+
+            if not has_none:
+                new_attrs.append(attr)
+            else:
+                print(f"Removed None attribute from node '{node.name or node.op_type}'")
+
+        # Replace attribute list with cleaned list
+        del node.attribute[:]
+        node.attribute.extend(new_attrs)
 
 def autopatch_model(model):
     fix_reduce_nodes(model)
