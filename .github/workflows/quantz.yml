@@ -28,7 +28,7 @@ jobs:
 
       - name: Run quantisize.py script
         run: |
-          python quantisize.py model.onnx model_quant.onnx
+          python quantize.py model.onnx model_quant.onnx
 
       - name: Verify quantized model
         run: ls -lh model_quant.onnx
