@@ -21,7 +21,7 @@ jobs:
         run: |
           ls -lh model.onnx
           head -20 model.onnx || echo "File head not readable"
-    
+
       - name: Setup Python
         uses: actions/setup-python@v4
         with:
@@ -29,12 +29,30 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install --force-reinstall tensorflow==2.12.0 tensorflow-probability==0.19.0 onnx onnx-tf
-          
+          pip install --force-reinstall tensorflow==2.12.0 tensorflow-probability==0.19.0 onnx==1.14.0 onnx-tf==1.15.0 onnx-simplifier
+
+      - name: Simplify ONNX model
+        run: |
+          python -m onnxsim model.onnx model_simplified.onnx
+
+      - name: Echo ONNX model inspection commands
+        run: |
+          echo "import onnx"
+          echo "model = onnx.load('model_simplified.onnx')"
+          echo "for node in model.graph.node:"
+          echo "    for attr in node.attribute:"
+          echo "        if attr is None:"
+          echo "            print('Node with None attribute:', node)"
+
       - name: Run conversion script
         run: |
           python convert.py
 
+      - name: Upload TFLite artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: model-tflite
+          path: model.tflite
       - name: Upload TFLite artifact
         uses: actions/upload-artifact@v4
         with:
