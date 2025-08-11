@@ -317,32 +317,37 @@ def ensure_unsqueeze_axes_inputs(model):
     """
     Ensure Unsqueeze nodes that require an 'axes' input actually have one.
     If an Unsqueeze node has only the data input, append an INT64 constant
-    initializer with value [0] and add it to node.input.
+    initializer with value taken from an 'axes' attribute (if present) or
+    fallback to [0].
     """
     for node in model.graph.node:
         if node.op_type != "Unsqueeze":
             continue
 
-        # if axes already present as a second input, skip
+        # If axes already present as a second input, skip
         if len(node.input) > 1 and node.input[1] not in (None, ""):
             continue
 
-        # If there's an 'axes' attribute already, convert attr -> input (create const)
-        # or if no attr, create a default [0]
+        # Try to read axes from an attribute if present
         axes_vals = None
         for a in node.attribute:
             if getattr(a, "name", None) == "axes":
-                # attribute may be empty or a list
                 try:
-                    axes_vals = list(a.ints) if hasattr(a, "ints") else None
+                    # attribute may be repeated ints
+                    axes_vals = list(a.ints)
                 except Exception:
                     axes_vals = None
                 break
 
-        if axes_vals is None:
-            axes_vals = [0]  # conservative default
+        if axes_vals is None or len(axes_vals) == 0:
+            axes_vals = [0]  # conservative fallback
 
-        # create a unique initializer name and append if missing
+        # If node has no data input, skip with a warning
+        if not node.input:
+            print(f"Warning: Unsqueeze node '{node.name or node.op_type}' has no inputs; skipping injection")
+            continue
+
+        # Create unique initializer name & append if missing
         const_name = unique_name((node.name or "Unsqueeze") + "_axes_const")
         axes_tensor = helper.make_tensor(
             name=const_name,
@@ -352,19 +357,15 @@ def ensure_unsqueeze_axes_inputs(model):
         )
         append_initializer_if_missing(model, axes_tensor)
 
-        # append the axes input to the node (keep data input first)
-        if len(node.input) == 0:
-            print(f"Warning: Unsqueeze node '{node.name or node.op_type}' has no inputs; skipping")
-            continue
-        # ensure we keep data input and then axes
-        data = node.input[0]
-        node.input[:] = [data, const_name]
+        # Replace inputs to be [data_input, axes_const]
+        data_input = node.input[0]
+        node.input[:] = [data_input, const_name]
 
-        # remove any 'axes' attribute to avoid ambiguity
+        # Remove any axes attribute to avoid ambiguity
         node.attribute[:] = [attr for attr in node.attribute if getattr(attr, "name", None) != "axes"]
 
         print(f"Injected axes tensor {const_name}={axes_vals} into Unsqueeze node '{node.name or node.op_type}'")
-
+        
 def autopatch_model(model):
     fix_reduce_nodes(model)
     fix_cast_nodes(model)
