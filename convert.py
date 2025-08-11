@@ -121,6 +121,12 @@ def onnx_to_tflite(input_onnx, output_tflite):
     print(f"Loading ONNX model: {input_onnx}")
     model = onnx.load(input_onnx)
 
+    # Minimal fix: check for None attributes in nodes before conversion
+    for node in model.graph.node:
+        for attr in node.attribute:
+            if attr is None:
+                raise ValueError(f"Node '{node.name or node.op_type}' has None attribute, aborting conversion")
+
     print("Patching ONNX model...")
     autopatch_model(model)
 
