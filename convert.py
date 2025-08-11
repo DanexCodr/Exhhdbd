@@ -1,4 +1,5 @@
 import onnx
+from onnx import helper, TensorProto
 from onnx_tf.backend import prepare
 import tensorflow as tf
 
@@ -29,8 +30,16 @@ def clean_onnx_model(model):
                 new_attrs.append(attr)
             # else drop empty attribute
 
+        # Assign cleaned attributes back
         del node.attribute[:]
         node.attribute.extend(new_attrs)
+
+        # Add required 'to' attribute for Cast nodes if missing
+        if node.op_type == "Cast":
+            has_to = any(attr.name == "to" for attr in node.attribute)
+            if not has_to:
+                to_attr = helper.make_attribute("to", TensorProto.FLOAT)  # cast to float32 by default
+                node.attribute.append(to_attr)
 
 def main():
     print("Loading simplified ONNX model...")
@@ -38,6 +47,9 @@ def main():
 
     print("Cleaning ONNX model attributes...")
     clean_onnx_model(onnx_model)
+
+    print("Checking model validity...")
+    onnx.checker.check_model(onnx_model)
 
     print("Converting ONNX to TensorFlow...")
     tf_rep = prepare(onnx_model, strict=False)
