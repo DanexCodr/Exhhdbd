@@ -1,3 +1,5 @@
+
+
 import os, sys, json, traceback
 import onnx
 from onnx import helper, TensorProto, numpy_helper
@@ -5,63 +7,71 @@ from onnx_tf.backend import prepare
 import tensorflow as tf
 import numpy as np
 
-# --- helpers -----------------------------------------------------------------
 ONNX_FLOAT = TensorProto.FLOAT
 ONNX_INT64 = TensorProto.INT64
 ONNX_INT32 = TensorProto.INT32
 
+def get_opset_version(model):
+    # Prefer the default-domain ('') opset import; fallback to max present
+    for oi in model.opset_import:
+        if oi.domain == "" or oi.domain == "ai.onnx":
+            return oi.version
+    # fallback
+    return max((oi.version for oi in model.opset_import), default=0)
+
 def safe_name(a): return getattr(a, "name", None)
 
 def fix_repeated_field(attr, field_name):
-    # ensure repeated fields are lists rather than None
     if hasattr(attr, field_name):
         val = getattr(attr, field_name)
         if val is None:
-            # set to empty sequence (works for lists)
             setattr(attr, field_name, [])
     return attr
 
-def ensure_common_defaults(node):
-    """Fill common missing attributes for ops that often break onnx-tf conversion."""
+def ensure_common_defaults(node, opset_v):
+    """Fill common missing attributes for ops that often break onnx-tf conversion.
+       Respect opset: do NOT add old-style Slice attrs when opset >= 10.
+    """
     # Cast -> 'to' (dtype)
     if node.op_type == "Cast":
         if not any(safe_name(a) == "to" for a in node.attribute):
             node.attribute.append(helper.make_attribute("to", TensorProto.FLOAT))
+
     # Concat -> 'axis'
     if node.op_type == "Concat":
         if not any(safe_name(a) == "axis" for a in node.attribute):
             node.attribute.append(helper.make_attribute("axis", 1))
-    # ReduceMean/ReduceSum/Reduce* -> 'keepdims' default 1
+
+    # Reduce* -> keepdims + axes default
     if node.op_type.startswith("Reduce"):
         if not any(safe_name(a) == "keepdims" for a in node.attribute):
             node.attribute.append(helper.make_attribute("keepdims", 1))
-        # ensure axes attr exists and is a list of ints (if absent, create empty list)
         if not any(safe_name(a) == "axes" for a in node.attribute):
             node.attribute.append(helper.make_attribute("axes", []))
-    # Shape -> nothing usually required, but ensure no None attrs
-    # Slice/Reshape -> ensure needed attrs exist
-    if node.op_type == "Slice":
-        # older ONNX uses attributes starts/ends/axes; ensure they exist as ints lists
-        if not any(safe_name(a) == "starts" for a in node.attribute):
-            node.attribute.append(helper.make_attribute("starts", []))
-        if not any(safe_name(a) == "ends" for a in node.attribute):
-            node.attribute.append(helper.make_attribute("ends", []))
-        if not any(safe_name(a) == "axes" for a in node.attribute):
-            node.attribute.append(helper.make_attribute("axes", []))
-    # Reshape -> no-op here
-    return node
 
-def clean_node_attributes(model):
+    # Slice: **only** add attribute defaults for old opsets (<10).
+    # For opset >= 10, Slice uses inputs for starts/ends/etc — adding attributes breaks the model.
+    if node.op_type == "Slice":
+        if opset_v < 10:
+            if not any(safe_name(a) == "starts" for a in node.attribute):
+                node.attribute.append(helper.make_attribute("starts", []))
+            if not any(safe_name(a) == "ends" for a in node.attribute):
+                node.attribute.append(helper.make_attribute("ends", []))
+            if not any(safe_name(a) == "axes" for a in node.attribute):
+                node.attribute.append(helper.make_attribute("axes", []))
+        else:
+            # opset >= 10: do not inject starts/ends attributes
+            pass
+
+def clean_node_attributes(model, opset_v):
     for node in model.graph.node:
         new_attrs = []
         for a in list(node.attribute):
             if a is None:
                 continue
-            # fix repeated fields that sometimes become None
             fix_repeated_field(a, "ints")
             fix_repeated_field(a, "floats")
             fix_repeated_field(a, "strings")
-            # scalar fields
             if hasattr(a, "s") and a.s is None:
                 a.s = b""
             if hasattr(a, "i") and a.i is None:
@@ -69,7 +79,7 @@ def clean_node_attributes(model):
             new_attrs.append(a)
         del node.attribute[:]
         node.attribute.extend(new_attrs)
-        ensure_common_defaults(node)
+        ensure_common_defaults(node, opset_v)
 
 def add_value_info_for_missing_outputs(model):
     present = {vi.name for vi in list(model.graph.value_info) + list(model.graph.input) + list(model.graph.output)}
@@ -112,7 +122,6 @@ def find_missing_inputs(model):
     return sorted(set(missing))
 
 def inject_dummy_init(model, name, dtype=ONNX_FLOAT):
-    # create a 1-element initializer and value_info
     if dtype == ONNX_FLOAT:
         arr = np.zeros((1,), dtype=np.float32)
     else:
@@ -137,7 +146,6 @@ def minimal_for_node(model, idx):
         if inp in inits:
             init = inits[inp]
             new_inits.append(init)
-            # create matching value_info for initializer
             try:
                 new_inputs.append(helper.make_tensor_value_info(inp, init.data_type, list(init.dims)))
             except Exception:
@@ -158,7 +166,6 @@ def isolate_failing_node(model, max_nodes=200):
             break
         try:
             small = minimal_for_node(model, idx)
-            # try prepare on that small model
             try:
                 onnx.checker.check_model(small)
             except Exception:
@@ -182,7 +189,6 @@ def isolate_failing_node(model, max_nodes=200):
     print("No failing single-node repro found.")
     return None
 
-# --- main --------------------------------------------------------------------
 def main():
     AUTO_FIX = os.environ.get("AUTO_FIX", "0") in ("1", "true", "True")
     infile = os.environ.get("INPUT_ONNX", "model_simplified.onnx")
@@ -190,18 +196,18 @@ def main():
 
     model = onnx.load(infile)
 
-    # shape inference
     try:
         print("Running shape inference...")
         model = onnx.shape_inference.infer_shapes(model)
     except Exception as e:
         print("shape inference failed (continuing):", e)
 
-    # clean attributes & set defaults
-    print("Cleaning node attributes and injecting defaults...")
-    clean_node_attributes(model)
+    opset_v = get_opset_version(model)
+    print("Detected opset version:", opset_v)
 
-    # add missing value_info for outputs
+    print("Cleaning node attributes and injecting defaults (opset-aware)...")
+    clean_node_attributes(model, opset_v)
+
     added = add_value_info_for_missing_outputs(model)
     if added:
         print("Added value_info for outputs:", added)
@@ -210,7 +216,6 @@ def main():
     onnx.save(model, cleaned)
     print("Saved cleaned model as", cleaned)
 
-    # run checker
     try:
         print("Running ONNX checker...")
         onnx.checker.check_model(model)
@@ -220,7 +225,6 @@ def main():
         open("diagnostics.txt", "w").write(str(e))
         sys.exit(1)
 
-    # find missing inputs
     missing = find_missing_inputs(model)
     if missing:
         print("Missing inputs referenced by nodes:", missing)
@@ -236,7 +240,6 @@ def main():
     else:
         print("No missing inputs detected.")
 
-    # attempt conversion
     try:
         print("Preparing onnx-tf representation (prepare)...")
         tf_rep = prepare(model, strict=False)
@@ -244,7 +247,6 @@ def main():
         tf_rep.export_graph("saved_model")
     except Exception as e:
         print("ONNX->TensorFlow conversion failed (export stage):", e)
-        # isolate failing node
         info = isolate_failing_node(model)
         if info:
             print("Isolation produced diagnostics.txt and failing_node_*.onnx. Attach them or paste here for help.")
@@ -253,7 +255,6 @@ def main():
             print("No isolation info; see error.txt")
         sys.exit(1)
 
-    # convert saved_model to tflite
     try:
         print("Converting SavedModel to TFLite...")
         converter = tf.lite.TFLiteConverter.from_saved_model("saved_model")
