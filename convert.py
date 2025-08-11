@@ -30,31 +30,50 @@ def fix_concat_nodes(model):
                 node.attribute.append(helper.make_attribute("axis", -1))
 
 def fix_slice_nodes(model):
+    """For opset >= 10, Slice should have inputs instead of attributes."""
     opset_version = model.opset_import[0].version
     for node in model.graph.node:
-        if node.op_type == "Slice":
-            if opset_version < 10:
-                # Old Slice used attributes
-                needed_attrs = ["starts", "ends", "axes", "steps"]
-                existing_names = {attr.name for attr in node.attribute}
-                old_attrs = list(node.attribute)
-                del node.attribute[:]  # clear in place
-                for attr in old_attrs:
-                    if attr.name not in ("starts", "ends", "axes", "steps"):
-                        node.attribute.append(attr)
-                for attr_name in needed_attrs:
-                    if attr_name not in existing_names:
-                        print(f"Fixing {node.name or 'Slice'}: adding {attr_name}=[]")
-                        node.attribute.append(helper.make_attribute(attr_name, []))
-            else:
-                # New Slice (opset ≥10) uses inputs, not attributes
-                if node.attribute:
-                    print(f"Removing old-style Slice attributes from {node.name or 'Slice'} for opset {opset_version}")
-                    del node.attribute[:]
+        if node.op_type != "Slice":
+            continue
+
+        if opset_version >= 10:
+            # Convert attributes to constant inputs if missing
+            needed_attrs = {
+                "starts": [0],
+                "ends": [9223372036854775807],  # Max int64 as "infinity"
+                "axes": [0],
+                "steps": [1]
+            }
+            for attr_name, default_val in needed_attrs.items():
+                attr = next((a for a in node.attribute if a.name == attr_name), None)
+                if attr is not None:
+                    val = list(attr.ints)
+                else:
+                    val = default_val
+                    print(f"Fixing {node.name or 'Slice'}: adding {attr_name}={val} as input tensor")
+
+                const_name = f"{node.name or 'Slice'}_{attr_name}_const"
+                tensor = helper.make_tensor(
+                    name=const_name,
+                    data_type=INT64,
+                    dims=[len(val)],
+                    vals=val
+                )
+                model.graph.initializer.append(tensor)
+                node.input.append(const_name)
+
+            node.attribute.clear()  # Remove all attributes
+        else:
+            # Old style: ensure attributes exist
+            needed_attrs = ["starts", "ends", "axes", "steps"]
+            for attr_name in needed_attrs:
+                if not any(attr.name == attr_name for attr in node.attribute):
+                    print(f"Fixing {node.name or 'Slice'}: adding {attr_name}=[]")
+                    node.attribute.append(helper.make_attribute(attr_name, []))
 
 def fix_unsqueeze_nodes(model):
     opset_version = model.opset_import[0].version
-    for idx, node in enumerate(model.graph.node):
+    for node in model.graph.node:
         if node.op_type == "Unsqueeze":
             if opset_version < 13:
                 has_axes = any(attr.name == "axes" for attr in node.attribute)
