@@ -107,48 +107,38 @@ def fix_reduce_nodes(model):
             if not any(getattr(a, "name", None) == "keepdims" for a in node.attribute):
                 node.attribute.append(helper.make_attribute("keepdims", 1))
 
-def clean_node_attributes(model):
+def clean_node_attributes_and_inputs(model):
     for node in model.graph.node:
-        # Filter out attributes that are None or contain None in their fields
+        # Clean attributes: remove those with None or fields containing None
         new_attrs = []
         for attr in node.attribute:
-            # Skip attribute if the attribute itself is None
             if attr is None:
                 continue
-
-            # Check all fields inside attribute
             fields = attr.ListFields()
-            has_none = False
-            for field, value in fields:
-                # value can be a protobuf field, check for None or empty protobuf objects
-                if value is None:
-                    has_none = True
-                    break
-                # For repeated fields (lists), check elements for None
-                if hasattr(value, '__iter__') and not isinstance(value, (str, bytes)):
-                    for v in value:
-                        if v is None:
-                            has_none = True
-                            break
-                    if has_none:
-                        break
-
-            if not has_none:
-                new_attrs.append(attr)
-            else:
-                print(f"Removed None attribute from node '{node.name or node.op_type}'")
-
-        # Replace attribute list with cleaned list
+            if any(field_value is None or
+                   (hasattr(field_value, '__iter__') and
+                    any(v is None for v in field_value if v is not None))
+                   for _, field_value in fields):
+                # Skip attribute with None inside
+                continue
+            new_attrs.append(attr)
         del node.attribute[:]
         node.attribute.extend(new_attrs)
 
+        # Clean inputs: remove empty or None inputs
+        new_inputs = [i for i in node.input if i and i.strip() != ""]
+        if len(new_inputs) != len(node.input):
+            print(f"Cleaned empty inputs from node '{node.name or node.op_type}'")
+        del node.input[:]
+        node.input.extend(new_inputs)
+        
 def autopatch_model(model):
     fix_reduce_nodes(model)
     fix_cast_nodes(model)
     fix_concat_nodes(model)
     fix_slice_nodes(model)
     fix_unsqueeze_nodes(model)
-    clean_node_attributes(model)  # add this at the end to fix any None attribute fields
+    clean_node_attributes_and_inputs(model)  # add this at the end to fix any None attribute fields
 
 def check_none_attributes(model):
     for node in model.graph.node:
