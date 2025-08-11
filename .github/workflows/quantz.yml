@@ -1,4 +1,4 @@
-name: Convert ONNX to TFLite
+name: Quantize ONNX Model
 
 on:
   push:
@@ -6,7 +6,7 @@ on:
       - main
 
 jobs:
-  convert:
+  quantize:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -20,7 +20,8 @@ jobs:
       - name: Verify downloaded ONNX file
         run: |
           ls -lh model.onnx
-          head -20 model.onnx || echo "File head not readable"
+          onnxruntime_test=$(file model.onnx || true)
+          echo "ONNX file type: $onnxruntime_test"
 
       - name: Setup Python
         uses: actions/setup-python@v4
@@ -29,12 +30,29 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install --force-reinstall tensorflow==2.12.0 tensorflow-probability==0.19.0 onnx==1.14.0 onnx-tf==1.10.0 onnx-simplifier
+          python -m pip install --upgrade pip
+          pip install onnx onnxruntime onnxruntime-tools
 
-      - name: Simplify ONNX model
+      - name: Quantize ONNX model
         run: |
-          python -m onnxsim model.onnx model_simplified.onnx
+          python - <<'EOF'
+          from onnxruntime.quantization import quantize_dynamic, QuantType
+          import onnx
+          model_fp32 = "model.onnx"
+          model_quant = "model_quant.onnx"
+          quantize_dynamic(model_fp32, model_quant, weight_type=QuantType.QInt8)
+          print(f"Quantization complete: {model_quant}")
+          EOF
 
+      - name: Verify quantized ONNX model
+        run: |
+          ls -lh model_quant.onnx
+
+      - name: Upload quantized ONNX model
+        uses: actions/upload-artifact@v4
+        with:
+          name: model-quantized
+          path: model_quant.onnx
       - name: Echo ONNX model inspection commands
         run: |
           echo "import onnx"
