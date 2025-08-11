@@ -12,18 +12,11 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Download any .onnx from latest release assets
-        shell: bash
+      - name: Download model.onnx from Release asset
         run: |
-          assets_json=$(curl -s https://api.github.com/repos/DanexCodr/Exhhdbd/releases/latest)
-          DOWNLOAD_URL=$(echo "$assets_json" | jq -r '.assets[] | select(.name | endswith(".onnx")) | .browser_download_url' | head -n 1)
-          if [[ -z "$DOWNLOAD_URL" ]]; then
-            echo "No .onnx asset found in latest release"
-            exit 1
-          fi
-          echo "Downloading ONNX model from: $DOWNLOAD_URL"
-          curl -L -o model.onnx "$DOWNLOAD_URL"
-
+         echo "Downloading from fixed URL"
+         curl -L -o model.onnx "https://github.com/DanexCodr/Exhhdbd/releases/download/Durhrj/model.onnx"
+    
       - name: Setup Python
         uses: actions/setup-python@v4
         with:
