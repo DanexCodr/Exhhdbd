@@ -21,7 +21,7 @@ import shutil
 import onnx
 from onnx import helper, shape_inference
 from onnx import TensorProto
-from onnx.onnx_cpp2py_export import check
+import onnx.checker
 import tensorflow as tf
 from onnx_tf.backend import prepare
 
