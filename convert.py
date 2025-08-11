@@ -1,16 +1,34 @@
 #!/usr/bin/env python3
+"""
+Robust ONNX -> TensorFlow -> TFLite conversion helper.
+
+This version adds defensive cleaning steps to handle problematic ONNX models
+that contain None attributes/empty inputs, dynamic dims, Shape nodes, etc.
+It attempts to autopatch common issues, runs shape inference (when possible),
+replaces Shape nodes with constants where feasible, and then calls onnx-tf
+to export a SavedModel which is converted to TFLite.
+
+Usage:
+    python convert.py input_model.onnx output_model.tflite
+"""
+
 import os
 import sys
-import onnx
-from onnx import helper, shape_inference
-import tensorflow as tf
-from onnx_tf.backend import prepare
 import uuid
 import tempfile
 import shutil
 
-FLOAT = onnx.TensorProto.FLOAT
-INT64 = onnx.TensorProto.INT64
+import onnx
+from onnx import helper, shape_inference
+from onnx import TensorProto
+from onnx.onnx_cpp2py_export import check
+import tensorflow as tf
+from onnx_tf.backend import prepare
+
+# Constants
+FLOAT = TensorProto.FLOAT
+INT64 = TensorProto.INT64
+
 
 def get_opset_version(model):
     for oi in model.opset_import:
@@ -21,15 +39,19 @@ def get_opset_version(model):
     except Exception:
         return 0
 
+
 def unique_name(base):
     return f"{base}_{uuid.uuid4().hex[:8]}"
+
 
 def name_in_initializers(model, name):
     return any(init.name == name for init in model.graph.initializer)
 
+
 def append_initializer_if_missing(model, tensor_proto):
     if not name_in_initializers(model, tensor_proto.name):
         model.graph.initializer.append(tensor_proto)
+
 
 def fix_cast_nodes(model):
     for node in model.graph.node:
@@ -37,11 +59,13 @@ def fix_cast_nodes(model):
             if not any(getattr(a, "name", None) == "to" for a in node.attribute):
                 node.attribute.append(helper.make_attribute("to", FLOAT))
 
+
 def fix_concat_nodes(model):
     for node in model.graph.node:
         if node.op_type == "Concat":
             if not any(getattr(a, "name", None) == "axis" for a in node.attribute):
                 node.attribute.append(helper.make_attribute("axis", -1))
+
 
 def fix_slice_nodes(model):
     opset_version = get_opset_version(model)
@@ -56,11 +80,17 @@ def fix_slice_nodes(model):
             steps = list(attr_map.get("steps").ints) if "steps" in attr_map else []
 
             if not starts and not ends and not axes and not steps:
+                # conservative defaults
                 starts = [0]
                 ends = [9223372036854775807]
                 axes = [0]
                 steps = [1]
 
+            # preserve only data input and append starts/ends/axes/steps constants
+            if not node.input:
+                # weird node with no inputs: skip
+                print(f"Warning: Slice node '{node.name or node.op_type}' has no inputs, skipping fix")
+                continue
             data_input = node.input[0]
             node.input[:] = [data_input]
 
@@ -75,11 +105,13 @@ def fix_slice_nodes(model):
                 append_initializer_if_missing(model, tensor)
                 node.input.append(const_name)
 
+            # remove attribute-style fields
             del node.attribute[:]
         else:
             for attr_name in ("starts", "ends", "axes", "steps"):
                 if not any(getattr(a, "name", None) == attr_name for a in node.attribute):
                     node.attribute.append(helper.make_attribute(attr_name, []))
+
 
 def fix_unsqueeze_nodes(model):
     opset_version = get_opset_version(model)
@@ -100,6 +132,7 @@ def fix_unsqueeze_nodes(model):
                     append_initializer_if_missing(model, axes_tensor)
                     node.input.append(axes_name)
 
+
 def fix_reduce_nodes(model):
     reduce_ops = ("ReduceMean", "ReduceSum", "ReduceProd", "ReduceMax", "ReduceMin")
     for node in model.graph.node:
@@ -107,52 +140,91 @@ def fix_reduce_nodes(model):
             if not any(getattr(a, "name", None) == "keepdims" for a in node.attribute):
                 node.attribute.append(helper.make_attribute("keepdims", 1))
 
+
 def clean_node_attributes_and_inputs(model):
+    """
+    Remove node attributes or attribute-fields that contain None values,
+    and remove empty/None inputs. Defensive against UPB repeated containers.
+    """
     for node in model.graph.node:
         new_attrs = []
-        for attr in node.attribute:
+        for attr in list(node.attribute):
             if attr is None:
+                print(f"Removed None attribute from node '{node.name or node.op_type}'")
                 continue
-            fields = attr.ListFields()
-            if any(field_value is None or
-                   (hasattr(field_value, '__iter__') and
-                    any(v is None for v in field_value if v is not None))
-                   for _, field_value in fields):
+            try:
+                fields = attr.ListFields()
+            except Exception:
+                print(f"Skipping attribute (ListFields failed) on node '{node.name or node.op_type}'")
                 continue
+
+            bad = False
+            for _, field_value in fields:
+                try:
+                    if field_value is None:
+                        bad = True
+                        break
+                    if hasattr(field_value, "__iter__") and not isinstance(field_value, (bytes, str)):
+                        for v in field_value:
+                            if v is None:
+                                bad = True
+                                break
+                        if bad:
+                            break
+                except Exception:
+                    bad = True
+                    break
+
+            if bad:
+                print(f"Removed attribute '{getattr(attr, 'name', None)}' from node '{node.name or node.op_type}' because it contained None")
+                continue
+
             new_attrs.append(attr)
+
+        # replace attributes
         del node.attribute[:]
         node.attribute.extend(new_attrs)
 
-        new_inputs = [i for i in node.input if i and i.strip() != ""]
+        # Clean inputs: remove empty strings or None
+        new_inputs = []
+        for inp in node.input:
+            if inp is None:
+                print(f"Removed None input from node '{node.name or node.op_type}'")
+                continue
+            if isinstance(inp, str) and inp.strip() == "":
+                print(f"Removed empty-string input from node '{node.name or node.op_type}'")
+                continue
+            new_inputs.append(inp)
+
         if len(new_inputs) != len(node.input):
-            print(f"Cleaned empty inputs from node '{node.name or node.op_type}'")
+            print(f"Cleaned inputs for node '{node.name or node.op_type}': {len(node.input)} -> {len(new_inputs)}")
         del node.input[:]
         node.input.extend(new_inputs)
 
-def fix_dynamic_dims(model):
-    for input_tensor in model.graph.input:
-        shape = input_tensor.type.tensor_type.shape
-        for dim in shape.dim:
-            if dim.dim_value <= 0:  # Dynamic dimension
-                dim.dim_value = 1  # Set to fixed value
-                print(f"Fixed dynamic dimension in input {input_tensor.name} to 1")
 
 def replace_shape_nodes(model):
+    """
+    Replace Shape nodes with Constant nodes when the shape can be
+    determined from value_info. Uses safe clearing of model.graph.node.
+    """
     shape_map = {}
-    for tensor in model.graph.value_info:
-        shape = tensor.type.tensor_type.shape
-        shape_dims = [dim.dim_value if dim.dim_value > 0 else 1 for dim in shape.dim]
-        shape_map[tensor.name] = shape_dims
+    # collect shapes from value_info and inputs (conservative)
+    for tensor in list(model.graph.value_info) + list(model.graph.input):
+        try:
+            shape = tensor.type.tensor_type.shape
+            shape_dims = [dim.dim_value if (hasattr(dim, "dim_value") and dim.dim_value and dim.dim_value > 0) else 1 for dim in shape.dim]
+            shape_map[tensor.name] = shape_dims
+        except Exception:
+            continue
 
     new_nodes = []
     for node in model.graph.node:
         if node.op_type == "Shape":
-            input_name = node.input[0]
-            if input_name in shape_map:
-                shape_val = shape_map[input_name]
-                const_name = node.output[0] + "_const"
+            if node.input and node.input[0] in shape_map:
+                shape_val = shape_map[node.input[0]]
+                const_name = node.output[0]
                 tensor = helper.make_tensor(
-                    name=const_name,
+                    name=const_name + "_val",
                     data_type=INT64,
                     dims=[len(shape_val)],
                     vals=shape_val
@@ -160,16 +232,32 @@ def replace_shape_nodes(model):
                 const_node = helper.make_node(
                     'Constant',
                     inputs=[],
-                    outputs=node.output,
-                    name=node.name + "_replaced" if node.name else None,
+                    outputs=[const_name],
+                    name=(node.name + "_replaced") if node.name else unique_name("Shape_replaced"),
                     value=tensor
                 )
                 new_nodes.append(const_node)
-                print(f"Replaced Shape node {node.name} with constant")
+                print(f"Replaced Shape node {node.name or '(unnamed)'} with Constant -> {const_name}")
                 continue
         new_nodes.append(node)
-    model.graph.node.Clear()
+
+    # Safely replace nodes list
+    del model.graph.node[:]
     model.graph.node.extend(new_nodes)
+
+
+def fix_dynamic_dims(model):
+    for input_tensor in model.graph.input:
+        try:
+            shape = input_tensor.type.tensor_type.shape
+            for dim in shape.dim:
+                # treat non-positive or unknown dims as dynamic; set to 1
+                if not hasattr(dim, "dim_value") or dim.dim_value <= 0:
+                    dim.dim_value = 1
+                    print(f"Fixed dynamic dimension in input {input_tensor.name} to 1")
+        except Exception:
+            continue
+
 
 def autopatch_model(model):
     fix_reduce_nodes(model)
@@ -177,21 +265,43 @@ def autopatch_model(model):
     fix_concat_nodes(model)
     fix_slice_nodes(model)
     fix_unsqueeze_nodes(model)
+    # run cleaning after other smaller fixes
     clean_node_attributes_and_inputs(model)
 
+
 def check_none_attributes(model):
+    """Prints any nodes/inputs/attributes that still contain None/empty strings."""
+    found = False
     for i, node in enumerate(model.graph.node):
         for attr in node.attribute:
             if attr is None:
-                print(f"[Node {i} - {node.name or node.op_type}] has None attribute!")
+                print(f"[Node {i} - {node.name or node.op_type}] has a None attribute object")
+                found = True
             else:
-                fields = attr.ListFields()
-                for name, val in fields:
-                    if val is None:
-                        print(f"[Node {i} - {node.name or node.op_type}] attribute '{attr.name}' field '{name}' is None!")
+                try:
+                    fields = attr.ListFields()
+                    for name, val in fields:
+                        if val is None:
+                            print(f"[Node {i} - {node.name or node.op_type}] attribute '{getattr(attr, 'name', None)}' field '{name}' is None")
+                            found = True
+                        elif hasattr(val, "__iter__") and not isinstance(val, (bytes, str)):
+                            for v in val:
+                                if v is None:
+                                    print(f"[Node {i} - {node.name or node.op_type}] attribute '{getattr(attr, 'name', None)}' contains None element")
+                                    found = True
+                                    break
+                except Exception:
+                    print(f"[Node {i} - {node.name or node.op_type}] attribute.ListFields() failed (could be UPB); please inspect")
+                    found = True
+
         for idx, inp in enumerate(node.input):
             if inp is None or (isinstance(inp, str) and inp.strip() == ""):
-                print(f"[Node {i} - {node.name or node.op_type}] input[{idx}] is empty or None!")
+                print(f"[Node {i} - {node.name or node.op_type}] input[{idx}] is empty or None")
+                found = True
+
+    if not found:
+        print("No None attributes/inputs found in model nodes (basic check).")
+
 
 def onnx_to_tflite(input_onnx, output_tflite):
     if not os.path.exists(input_onnx):
@@ -204,40 +314,63 @@ def onnx_to_tflite(input_onnx, output_tflite):
     try:
         model = shape_inference.infer_shapes(model)
     except Exception as e:
-        print(f"Shape inference failed: {e}")
+        print(f"Shape inference failed (continuing): {e}")
 
     print("Fixing dynamic dimensions...")
     fix_dynamic_dims(model)
 
-    print("Replacing Shape nodes...")
+    print("Replacing Shape nodes (where possible)...")
     try:
+        # attempt to infer shapes again to help replace Shape nodes
         model = shape_inference.infer_shapes(model)
+    except Exception:
+        pass
+
+    try:
         replace_shape_nodes(model)
     except Exception as e:
-        print(f"Failed to replace Shape nodes: {e}")
+        print(f"Failed to replace Shape nodes (continuing): {e}")
 
-    print("Patching ONNX model...")
+    print("Patching ONNX model (autopatches + cleaning)...")
     autopatch_model(model)
 
-    print("Running final shape inference...")
+    print("Cleaning node attributes and inputs once more...")
+    clean_node_attributes_and_inputs(model)
+
+    print("Checking for None attributes/inputs (diagnostics)...")
+    check_none_attributes(model)
+
+    print("Running final shape inference (will continue if it fails)...")
     try:
         model = shape_inference.infer_shapes(model)
     except Exception as e:
-        print(f"Final shape inference failed: {e}")
+        print(f"Final shape inference failed (non-fatal): {e}")
 
+    # Save patched ONNX temporarily
     with tempfile.NamedTemporaryFile(suffix=".onnx", delete=False) as tmp_file:
         tmp_path = tmp_file.name
         onnx.save(model, tmp_path)
+        print(f"Saved cleaned model as: {tmp_path}")
 
-    print("Converting patched ONNX to TensorFlow...")
+    print("Validating ONNX model with checker...")
+    try:
+        onnx.checker.check_model(model)
+        print("ONNX checker: OK")
+    except Exception as e:
+        print(f"ONNX checker reported issues (continuing): {e}")
+
+    print("Converting patched ONNX to TensorFlow (onnx-tf prepare)...")
     try:
         tf_rep = prepare(model, strict=False)
     except Exception as e:
-        print(f"ONNX to TF conversion failed: {e}")
+        print(f"ONNX->TF prepare failed: {e}")
+        # Re-raise so CI can surface diagnostics; you could instead attempt node isolation here.
         raise
 
+    # Use temp directory for TF SavedModel
     tmp_tf_dir = tempfile.mkdtemp(prefix="tf_model_")
     try:
+        print(f"Exporting SavedModel -> '{tmp_tf_dir}' ...")
         tf_rep.export_graph(tmp_tf_dir)
         print("Converting TensorFlow SavedModel to TFLite...")
         converter = tf.lite.TFLiteConverter.from_saved_model(tmp_tf_dir)
@@ -248,8 +381,16 @@ def onnx_to_tflite(input_onnx, output_tflite):
 
         print(f"✅ TFLite model saved to: {output_tflite}")
     finally:
-        os.remove(tmp_path)
-        shutil.rmtree(tmp_tf_dir)
+        # Clean up temporary files
+        try:
+            os.remove(tmp_path)
+        except Exception:
+            pass
+        try:
+            shutil.rmtree(tmp_tf_dir)
+        except Exception:
+            pass
+
 
 def main():
     if len(sys.argv) < 3:
@@ -265,5 +406,7 @@ def main():
         print("Error during conversion:", e)
         sys.exit(1)
 
+
 if __name__ == "__main__":
     main()
+```0
