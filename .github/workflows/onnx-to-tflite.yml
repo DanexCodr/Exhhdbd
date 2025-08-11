@@ -16,6 +16,11 @@ jobs:
         run: |
           echo "Downloading from fixed URL"
           curl -L -o model.onnx "https://github.com/DanexCodr/Exhhdbd/releases/download/Durhrj/model.onnx"
+
+      - name: Verify downloaded ONNX file
+        run: |
+          ls -lh model.onnx
+          head -20 model.onnx || echo "File head not readable"
     
       - name: Setup Python
         uses: actions/setup-python@v4
