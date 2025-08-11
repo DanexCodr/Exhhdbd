@@ -1,7 +1,7 @@
 import onnx
 import tensorflow as tf
 from onnx_tf.backend import prepare
-from onnx import helper
+from onnx import helper, TensorProto
 
 def fix_reduce_nodes(model):
     """Patch Reduce ops with None axes to default [0]."""
@@ -12,12 +12,14 @@ def fix_reduce_nodes(model):
                 print(f"Fixing {node.name or node.op_type}: setting axes=[0]")
                 node.attribute.append(helper.make_attribute("axes", [0]))
 
-def fix_shape_nodes(model):
-    """Ensure Shape ops don't break due to None inputs."""
+def fix_cast_nodes(model):
+    """Add missing 'to' attribute for Cast ops."""
     for node in model.graph.node:
-        if node.op_type == "Shape":
-            # No extra attr needed, but we could later enforce dtype if needed
-            pass
+        if node.op_type == "Cast":
+            has_to = any(attr.name == "to" for attr in node.attribute)
+            if not has_to:
+                print(f"Fixing {node.name or 'Cast'}: setting to=FLOAT")
+                node.attribute.append(helper.make_attribute("to", TensorProto.FLOAT))
 
 def clean_model(model):
     """Remove empty attributes and sanitize fields."""
@@ -53,8 +55,8 @@ def main():
     print("Fixing Reduce ops...")
     fix_reduce_nodes(onnx_model)
 
-    print("Fixing Shape ops...")
-    fix_shape_nodes(onnx_model)
+    print("Fixing Cast ops...")
+    fix_cast_nodes(onnx_model)
 
     print("Saving patched ONNX...")
     onnx.save(onnx_model, "model_fixed.onnx")
