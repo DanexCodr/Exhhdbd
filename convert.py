@@ -114,6 +114,16 @@ def autopatch_model(model):
     fix_slice_nodes(model)
     fix_unsqueeze_nodes(model)
 
+def check_none_attributes(model):
+    for node in model.graph.node:
+        for attr in node.attribute:
+            if attr is None:
+                raise ValueError(f"Node '{node.name or node.op_type}' has None attribute object")
+            # Check all fields inside the attribute for None
+            for field, value in attr.ListFields():
+                if value is None:
+                    raise ValueError(f"Node '{node.name or node.op_type}' attribute '{attr.name}' field '{field.name}' is None")
+
 def onnx_to_tflite(input_onnx, output_tflite):
     if not os.path.exists(input_onnx):
         raise FileNotFoundError(f"Input ONNX model not found: {input_onnx}")
@@ -121,11 +131,8 @@ def onnx_to_tflite(input_onnx, output_tflite):
     print(f"Loading ONNX model: {input_onnx}")
     model = onnx.load(input_onnx)
 
-    # Minimal fix: check for None attributes in nodes before conversion
-    for node in model.graph.node:
-        for attr in node.attribute:
-            if attr is None:
-                raise ValueError(f"Node '{node.name or node.op_type}' has None attribute, aborting conversion")
+    # Minimal fix: check for None attributes deeply before conversion
+    check_none_attributes(model)
 
     print("Patching ONNX model...")
     autopatch_model(model)
