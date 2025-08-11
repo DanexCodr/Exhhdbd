@@ -48,11 +48,19 @@ jobs:
         run: |
           python convert.py
 
-      - name: Upload TFLite artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: model-tflite
-          path: model.tflite
+      - name: Verify TFLite output presence
+        run: |
+          echo "Current directory: $(pwd)"
+          echo "Listing files:"
+          ls -la
+          if [ ! -f model.tflite ]; then
+            echo "Error: model.tflite not found!"
+            exit 1
+          else
+            echo "model.tflite found! Size:"
+            ls -lh model.tflite
+          fi
+
       - name: Upload TFLite artifact
         uses: actions/upload-artifact@v4
         with:
