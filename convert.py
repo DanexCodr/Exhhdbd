@@ -2,21 +2,21 @@
 """
 Robust ONNX -> TensorFlow -> TFLite conversion helper.
 
-This version adds defensive cleaning steps to handle problematic ONNX models
-that contain None attributes/empty inputs, dynamic dims, Shape nodes, etc.
-It attempts to autopatch common issues, runs shape inference (when possible),
-replaces Shape nodes with constants where feasible, and then calls onnx-tf
-to export a SavedModel which is converted to TFLite.
+This version is defensive: it deep-copies the model before patching,
+avoids forcing opset edits (which caused assignment errors), downgrades
+Unsqueeze nodes to attribute form (opset 11-style) to avoid missing
+handler implementations, and does cleaning/shape-inference where possible.
 
 Usage:
     python convert.py input_model.onnx output_model.tflite
 """
-
 import os
 import sys
 import uuid
 import tempfile
 import shutil
+import copy
+import traceback
 
 import onnx
 from onnx import helper, shape_inference
@@ -114,6 +114,7 @@ def fix_slice_nodes(model):
 
 
 def fix_unsqueeze_nodes(model):
+    # keep this in case old-opset unsqueeze attributes are required elsewhere
     opset_version = get_opset_version(model)
     for node in model.graph.node:
         if node.op_type == "Unsqueeze":
@@ -121,6 +122,7 @@ def fix_unsqueeze_nodes(model):
                 if not any(getattr(a, "name", None) == "axes" for a in node.attribute):
                     node.attribute.append(helper.make_attribute("axes", [0]))
             else:
+                # if model is still opset>=13 and only has single input, add axes const as a fallback
                 if len(node.input) == 1:
                     axes_name = unique_name(f"{node.name or 'Unsqueeze'}_axes_const")
                     axes_tensor = helper.make_tensor(
@@ -131,6 +133,25 @@ def fix_unsqueeze_nodes(model):
                     )
                     append_initializer_if_missing(model, axes_tensor)
                     node.input.append(axes_name)
+
+
+def downgrade_unsqueeze_nodes(model):
+    """
+    Convert v13-style Unsqueeze (axes as input) into attribute-style (v11)
+    so onnx-tf can find a handler for older versions. We do NOT modify model opset_imports
+    to avoid assignment errors; we only change nodes.
+    """
+    for node in model.graph.node:
+        if node.op_type == "Unsqueeze":
+            # Remove axes input(s) if present (v13 style)
+            if len(node.input) > 1:
+                # keep data input only
+                data = node.input[0]
+                node.input[:] = [data]
+            # remove axes attribute if present (avoid duplicates)
+            node.attribute[:] = [a for a in node.attribute if getattr(a, "name", None) != "axes"]
+            # add axes attribute as fallback
+            node.attribute.append(helper.make_attribute("axes", [0]))
 
 
 def fix_reduce_nodes(model):
@@ -205,7 +226,7 @@ def clean_node_attributes_and_inputs(model):
 def replace_shape_nodes(model):
     """
     Replace Shape nodes with Constant nodes when the shape can be
-    determined from value_info. Uses safe clearing of model.graph.node.
+    determined from value_info/inputs. Uses safe clearing of model.graph.node.
     """
     shape_map = {}
     # collect shapes from value_info and inputs (conservative)
@@ -258,33 +279,6 @@ def fix_dynamic_dims(model):
         except Exception:
             continue
 
-def downgrade_unsqueeze_nodes(model):
-    for node in model.graph.node:
-        if node.op_type == "Unsqueeze":
-            # Remove axes input if present (v13)
-            if len(node.input) > 1:
-                # axes input is second input; remove it to downgrade to v11 style
-                del node.input[1:]
-            # Remove axes input attribute if present (just in case)
-            node.attribute[:] = [attr for attr in node.attribute if attr.name != 'axes']
-            # Set axes attribute to default [0] or keep your logic
-            node.attribute.append(helper.make_attribute("axes", [0]))
-
-    # Also, forcibly set opset version to 11 for ai.onnx domain
-    for opset in model.opset_import:
-        if opset.domain == '' or opset.domain == 'ai.onnx':
-           opset.version = 11
-
-                       
-def autopatch_model(model):
-    fix_reduce_nodes(model)
-    fix_cast_nodes(model)
-    fix_concat_nodes(model)
-    fix_slice_nodes(model)
-    downgrade_unsqueeze_nodes(model)
-    # run cleaning after other smaller fixes
-    clean_node_attributes_and_inputs(model)
-
 
 def check_none_attributes(model):
     """Prints any nodes/inputs/attributes that still contain None/empty strings."""
@@ -320,12 +314,26 @@ def check_none_attributes(model):
         print("No None attributes/inputs found in model nodes (basic check).")
 
 
+def autopatch_model(model):
+    fix_reduce_nodes(model)
+    fix_cast_nodes(model)
+    fix_concat_nodes(model)
+    fix_slice_nodes(model)
+    # Downgrade unsqueeze to attribute-style (v11) to avoid missing v13 handler issues
+    downgrade_unsqueeze_nodes(model)
+    # run cleaning after other smaller fixes
+    clean_node_attributes_and_inputs(model)
+
+
 def onnx_to_tflite(input_onnx, output_tflite):
     if not os.path.exists(input_onnx):
         raise FileNotFoundError(f"Input ONNX model not found: {input_onnx}")
 
     print(f"Loading ONNX model: {input_onnx}")
-    model = onnx.load(input_onnx)
+    model_orig = onnx.load(input_onnx)
+
+    # work on a deepcopy to avoid mutating shared/upstream objects that may be read-only
+    model = copy.deepcopy(model_orig)
 
     print("Running shape inference...")
     try:
@@ -349,7 +357,11 @@ def onnx_to_tflite(input_onnx, output_tflite):
         print(f"Failed to replace Shape nodes (continuing): {e}")
 
     print("Patching ONNX model (autopatches + cleaning)...")
-    autopatch_model(model)
+    try:
+        autopatch_model(model)
+    except Exception as e:
+        print("Autopatch step raised an exception:", e)
+        traceback.print_exc()
 
     print("Cleaning node attributes and inputs once more...")
     clean_node_attributes_and_inputs(model)
@@ -380,8 +392,9 @@ def onnx_to_tflite(input_onnx, output_tflite):
     try:
         tf_rep = prepare(model, strict=False)
     except Exception as e:
-        print(f"ONNX->TF prepare failed: {e}")
-        # Re-raise so CI can surface diagnostics; you could instead attempt node isolation here.
+        print("ONNX->TF prepare failed:")
+        traceback.print_exc()
+        # re-raise so CI can see stack and diagnostics
         raise
 
     # Use temp directory for TF SavedModel
@@ -421,6 +434,7 @@ def main():
         onnx_to_tflite(input_onnx, output_tflite)
     except Exception as e:
         print("Error during conversion:", e)
+        traceback.print_exc()
         sys.exit(1)
 
 
