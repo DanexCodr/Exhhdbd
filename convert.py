@@ -6,6 +6,7 @@ import os
 
 # ====== Default constants ======
 FLOAT = onnx.TensorProto.FLOAT
+INT64 = onnx.TensorProto.INT64
 INPUT_ONNX = "model_simplified.onnx"
 PATCHED_ONNX = "model_patched.onnx"
 TF_MODEL_DIR = "tf_model"
@@ -38,12 +39,27 @@ def fix_slice_nodes(model):
                     node.attribute.append(helper.make_attribute(attr_name, []))
 
 def fix_unsqueeze_nodes(model):
-    for node in model.graph.node:
+    opset_version = model.opset_import[0].version
+    for idx, node in enumerate(model.graph.node):
         if node.op_type == "Unsqueeze":
-            has_axes = any(attr.name == "axes" for attr in node.attribute)
-            if not has_axes:
-                print(f"Fixing {node.name or 'Unsqueeze'}: setting axes=[0]")
-                node.attribute.append(helper.make_attribute("axes", [0]))
+            if opset_version < 13:
+                has_axes = any(attr.name == "axes" for attr in node.attribute)
+                if not has_axes:
+                    print(f"Fixing {node.name or 'Unsqueeze'}: setting axes=[0] (attribute mode)")
+                    node.attribute.append(helper.make_attribute("axes", [0]))
+            else:
+                # New style: axes as input tensor
+                if len(node.input) == 1:
+                    axes_name = f"{node.name or 'Unsqueeze'}_axes_const"
+                    print(f"Fixing {node.name or 'Unsqueeze'}: adding axes=[0] as input tensor")
+                    axes_tensor = helper.make_tensor(
+                        name=axes_name,
+                        data_type=INT64,
+                        dims=[1],
+                        vals=[0]
+                    )
+                    model.graph.initializer.append(axes_tensor)
+                    node.input.append(axes_name)
 
 def fix_reduce_nodes(model):
     reduce_ops = ["ReduceMean", "ReduceSum", "ReduceProd", "ReduceMax", "ReduceMin"]
