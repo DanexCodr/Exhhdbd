@@ -74,40 +74,4 @@ def main():
     print("Conversion complete!")
 
 if __name__ == "__main__":
-    main()        # Add required 'to' attribute for Cast nodes if missing
-        if node.op_type == "Cast":
-            has_to = any(attr.name == "to" for attr in node.attribute)
-            if not has_to:
-                to_attr = helper.make_attribute("to", TensorProto.FLOAT)  # cast to float32 by default
-                node.attribute.append(to_attr)
-
-def main():
-    print("Loading simplified ONNX model...")
-    onnx_model = onnx.load("model_simplified.onnx")
-
-    print("Cleaning ONNX model attributes...")
-    clean_onnx_model(onnx_model)
-
-    print("Checking model validity...")
-    onnx.checker.check_model(onnx_model)
-
-    print("Converting ONNX to TensorFlow...")
-    tf_rep = prepare(onnx_model, strict=False)
-
-    saved_model_dir = "saved_model"
-    print(f"Exporting TensorFlow SavedModel to '{saved_model_dir}'...")
-    tf_rep.export_graph(saved_model_dir)
-
-    print("Converting SavedModel to TFLite...")
-    converter = tf.lite.TFLiteConverter.from_saved_model(saved_model_dir)
-    tflite_model = converter.convert()
-
-    output_file = "model.tflite"
-    print(f"Saving TFLite model to '{output_file}'...")
-    with open(output_file, "wb") as f:
-        f.write(tflite_model)
-
-    print("Conversion complete!")
-
-if __name__ == "__main__":
     main()
