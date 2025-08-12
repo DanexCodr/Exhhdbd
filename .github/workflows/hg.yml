@@ -45,15 +45,16 @@ jobs:
             exit 1
           fi
 
-      - name: Rename d8.dex to d8 and make executable
-        run: |
-          mv d8.dex d8
-          chmod +x d8
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v2
+        with:
+          api-level: 33
+          build-tools: 33.0.2
 
-      - name: Dex patched classes
+      - name: Run d8
         run: |
           mkdir -p build/dex
-          ./d8 --min-api 21 --output build/dex build/unpacked
+          $ANDROID_HOME/build-tools/33.0.2/d8 --min-api 21 --output build/dex build/unpacked
     
       - name: Repack patched jar
         run: |
