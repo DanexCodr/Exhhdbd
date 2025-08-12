@@ -13,25 +13,17 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v4
 
-      - name: Install Bazel
-        uses: bazelbuild/setup-bazel@v4  # use v4 (latest stable) instead of non-existing v3
-        with:
-          bazel-version: 6.5.0
-
-      - name: Clone Desugar sources
+      - name: Download prebuilt desugar jar
         run: |
-          git clone https://android.googlesource.com/tools/base
-          cd base
-          git checkout studio-2024.1.1.21
-          cd ..
-
-      - name: Build Desugar jar
-        run: |
-          cd base
-          bazel build //:desugar_deploy.jar
-          cd ..
-          mkdir -p tools
-          cp base/bazel-bin/desugar_deploy.jar tools/desugar.jar
+          wget https://storage.googleapis.com/android-build-tools/desugar/desugar.jar -O tools/desugar.jar
+        # Create tools dir if missing
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          TOOLSDIR: tools
+        # Create tools folder if not exists
+      - name: Ensure tools directory exists
+        run: mkdir -p tools
 
       - name: Compile your Java sources
         run: |
@@ -43,7 +35,6 @@ jobs:
       - name: Run Desugar
         run: |
           BOOTCLASSPATH=$(dirname $(readlink -f $(which javac)))/../lib/rt.jar
-          # Verify if rt.jar exists (on some JDKs it might not)
           if [ ! -f "$BOOTCLASSPATH" ]; then
             echo "rt.jar not found at $BOOTCLASSPATH, trying alternative path"
             BOOTCLASSPATH=$(dirname $(readlink -f $(which javac)))/../jre/lib/rt.jar
