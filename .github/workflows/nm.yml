@@ -1,4 +1,4 @@
-name: Desugar Java 8 bytecode to Java 7
+name: Desugar Java 8 to Java 7
 
 on:
   push:
@@ -16,8 +16,8 @@ jobs:
       - name: Setup Java 8
         uses: actions/setup-java@v3
         with:
-          distribution: 'temurin'
-          java-version: '8'
+          distribution: temurin
+          java-version: 8
 
       - name: Check classes.jar presence
         run: ls -lh classes.jar
@@ -35,6 +35,16 @@ jobs:
           fi
 
           java -cp desugar-1.0.1.jar com.google.devtools.build.android.desugar.Desugar \
+            --input classes.jar \
+            --output build/classes_java7.jar \
+            --classpath_entry "" \
+            --bootclasspath_entry "$BOOTCLASSPATH"
+
+      - name: Upload desugared Java 7 jar
+        uses: actions/upload-artifact@v4
+        with:
+          name: classes-java7
+          path: build/classes_java7.jar          java -cp desugar-1.0.1.jar com.google.devtools.build.android.desugar.Desugar \
             --input classes.jar \
             --output build/classes_java7.jar \
             --classpath_entry "" \
