@@ -17,26 +17,26 @@ jobs:
         run: |
           ls -lh desugar-1.0.1.jar
           ls -lh classes.jar
-
+        
       - name: Run Desugar on existing classes.jar
         run: |
-         mkdir -p build
-         BOOTCLASSPATH=$(dirname $(readlink -f $(which javac)))/../lib/rt.jar
-         if [ ! -f "$BOOTCLASSPATH" ]; then
-           echo "rt.jar not found at $BOOTCLASSPATH, trying alternative path"
-           BOOTCLASSPATH=$(dirname $(readlink -f $(which javac)))/../jre/lib/rt.jar
-         fi
+          mkdir -p build
+          BOOTCLASSPATH=$(dirname $(readlink -f $(which javac)))/../lib/rt.jar
+          if [ ! -f "$BOOTCLASSPATH" ]; then
+            echo "rt.jar not found at $BOOTCLASSPATH, trying alternative path"
+            BOOTCLASSPATH=$(dirname $(readlink -f $(which javac)))/../jre/lib/rt.jar
+          fi
+          if [ ! -f "$BOOTCLASSPATH" ]; then
+            echo "Warning: rt.jar not found, Desugar might fail"
+          fi
 
-         if [ ! -f "$BOOTCLASSPATH" ]; then
-           echo "Warning: rt.jar not found, Desugar might fail"
-         fi
-
-         java -cp desugar-1.0.1.jar com.google.devtools.build.android.desugar.Desugar \
-           --input classes.jar \
-           --output build/classes_java7.jar \
-           --classpath_entry "" \
-           --bootclasspath_entry "$BOOTCLASSPATH"
-      
+          java --add-opens java.base/java.lang.invoke=ALL-UNNAMED \
+            -cp desugar-1.0.1.jar com.google.devtools.build.android.desugar.Desugar \
+            --input classes.jar \
+            --output build/classes_java7.jar \
+            --classpath_entry "" \
+            --bootclasspath_entry "$BOOTCLASSPATH"
+    
       - name: Upload Java 7 jar
         uses: actions/upload-artifact@v4
         with:
