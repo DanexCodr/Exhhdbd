@@ -20,7 +20,7 @@ jobs:
           java-version: '8'  
 
       - name: Check classes.jar presence  
-        run: ls -lh classes-java7-patched.jar  
+        run: ls -lh classes_java7_patched.jar  
 
       - name: Check desugar.jar presence  
         run: ls -lh desugar-1.0.1.jar  
@@ -35,7 +35,7 @@ jobs:
           fi
 
           java -cp desugar-1.0.1.jar com.google.devtools.build.android.desugar.Desugar \
-          --input classes.jar \
+          --input classes_java7_patched.jar \
           --output build/classes_java7.jar \
           --classpath_entry "" \
           --bootclasspath_entry "$BOOTCLASSPATH"
