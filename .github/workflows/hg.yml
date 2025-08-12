@@ -19,19 +19,16 @@ jobs:
           distribution: temurin
           java-version: 8
 
+      - name: Debug - list root files
+        run: ls -lh
+
       - name: Unpack committed desugared jar
         run: |
           mkdir -p build/unpacked
           unzip -o classes_java7.jar -d build/unpacked
 
-      - name: Debug  List unpacked files before javap
-        run: ls -lR build/unpacked/ai/onnxruntime/
-
-      - name: Show original OnnxRuntime.class (before patch)
-        run: |
-          javap -v build/unpacked/ai/onnxruntime/OnnxRuntime.class > build/original_OnnxRuntime.txt
-          echo "Original OnnxRuntime.class method/field names:"
-          grep "^[ ]*Name:" build/original_OnnxRuntime.txt
+      - name: Dump original OnnxRuntime.class bytecode
+        run: javap -v build/unpacked/ai/onnxruntime/OnnxRuntime.class > build/original_OnnxRuntime.txt
 
       - name: Compile PatchLoadLibRemover
         run: |
@@ -41,15 +38,21 @@ jobs:
       - name: Run PatchLoadLibRemover on OnnxRuntime.class
         run: java -cp build/tools:asm-9.4.jar:asm-commons-9.4.jar tools.PatchLoadLibRemover build/unpacked/ai/onnxruntime/OnnxRuntime.class
 
-      - name: Show patched OnnxRuntime.class (after patch)
-        run: |
-          javap -v build/unpacked/ai/onnxruntime/OnnxRuntime.class > build/patched_OnnxRuntime.txt
-          echo "Patched OnnxRuntime.class method/field names:"
-          grep "^[ ]*Name:" build/patched_OnnxRuntime.txt
+      - name: Dump patched OnnxRuntime.class bytecode
+        run: javap -v build/unpacked/ai/onnxruntime/OnnxRuntime.class > build/patched_OnnxRuntime.txt
 
-      - name: Show only changed parts between original and patched
+      - name: Show bytecode diff
+        run: diff -u build/original_OnnxRuntime.txt build/patched_OnnxRuntime.txt || true
+
+      - name: Verify patched OnnxRuntime.class validity
         run: |
-          diff -u <(grep "^[ ]*Name:" build/original_OnnxRuntime.txt) <(grep "^[ ]*Name:" build/patched_OnnxRuntime.txt) || true
+          javap -v build/unpacked/ai/onnxruntime/OnnxRuntime.class > /dev/null
+          if [ $? -eq 0 ]; then
+            echo "Class file verification PASSED."
+          else
+            echo "Class file verification FAILED."
+            exit 1
+          fi
 
       - name: Repack patched jar
         run: |
