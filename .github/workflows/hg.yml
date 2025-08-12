@@ -4,9 +4,6 @@ on:
   push:
     branches:
       - main
-    paths:
-      - 'classes_java7.jar'
-  workflow_dispatch:
 
 jobs:
   patch:
