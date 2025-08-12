@@ -1,6 +1,7 @@
 package tools;
 
 import org.objectweb.asm.*;
+import org.objectweb.asm.commons.AdviceAdapter;
 
 import java.io.File;
 import java.io.FileInputStream;
@@ -35,21 +36,32 @@ public class PatchLoadLibRemover {
             public MethodVisitor visitMethod(int access, String name, String desc,
                                              String signature, String[] exceptions) {
                 MethodVisitor mv = super.visitMethod(access, name, desc, signature, exceptions);
-                return new MethodVisitor(Opcodes.ASM9, mv) {
+
+                return new AdviceAdapter(Opcodes.ASM9, mv, access, name, desc) {
+
+                    private boolean skipNextLdc = false;
+
+                    @Override
+                    public void visitLdcInsn(Object value) {
+                        if (skipNextLdc) {
+                            // Skip this LDC instruction (argument to loadLibrary)
+                            skipNextLdc = false;
+                            System.out.println("Removed argument load: " + value);
+                        } else {
+                            super.visitLdcInsn(value);
+                        }
+                    }
+
                     @Override
                     public void visitMethodInsn(int opcode, String owner, String methodName, String methodDesc, boolean isInterface) {
-                        // Detect System.loadLibrary(String)
                         if (opcode == Opcodes.INVOKESTATIC
                             && owner.equals("java/lang/System")
                             && methodName.equals("loadLibrary")
                             && methodDesc.equals("(Ljava/lang/String;)V")) {
-                            // Skip this call (remove it) OR
-                            // You can replace with System.load(...) if you want:
-                            // super.visitLdcInsn("full path here");
-                            // super.visitMethodInsn(Opcodes.INVOKESTATIC, "java/lang/System", "load", "(Ljava/lang/String;)V", false);
-                            // For now, just remove call by not calling super.visitMethodInsn
+                            // Remove the call + the argument (previous LDC)
+                            skipNextLdc = true; // flag to skip previous LDC
                             System.out.println("Removed call to System.loadLibrary");
-                            // Do NOT call super.visitMethodInsn -> removes the call
+                            // Do NOT call super.visitMethodInsn, so call is removed
                         } else {
                             super.visitMethodInsn(opcode, owner, methodName, methodDesc, isInterface);
                         }
