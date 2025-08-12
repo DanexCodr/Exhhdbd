@@ -45,20 +45,6 @@ jobs:
             exit 1
           fi
 
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v2
-        with:
-          java-version: 17
-
-      - name: Install Android Build Tools 33.0.2
-        run: |
-          yes | $ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager --install "build-tools;33.0.2"
-
-      - name: Run d8
-        run: |
-          mkdir -p build/dex
-          $ANDROID_SDK_ROOT/build-tools/33.0.2/d8 --min-api 21 --output build/dex build/unpacked
-
       - name: Repack patched jar
         run: |
           cd build/unpacked
