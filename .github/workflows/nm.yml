@@ -10,45 +10,56 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - name: Checkout repo
-      uses: actions/checkout@v4
+      - name: Checkout repo
+        uses: actions/checkout@v4
 
-    - name: Install Bazel
-      uses: bazelbuild/setup-bazel@v3
-      with:
-        bazel-version: 6.5.0
+      - name: Install Bazel
+        uses: bazelbuild/setup-bazel@v4  # use v4 (latest stable) instead of non-existing v3
+        with:
+          bazel-version: 6.5.0
 
-    - name: Clone Desugar sources
-      run: |
-        git clone https://android.googlesource.com/tools/base
-        cd base
-        git checkout studio-2024.1.1.21
-        cd ..
+      - name: Clone Desugar sources
+        run: |
+          git clone https://android.googlesource.com/tools/base
+          cd base
+          git checkout studio-2024.1.1.21
+          cd ..
 
-    - name: Build Desugar jar
-      run: |
-        cd base
-        bazel build //:desugar_deploy.jar
-        cd ..
-        mkdir tools
-        cp base/bazel-bin/desugar_deploy.jar tools/desugar.jar
+      - name: Build Desugar jar
+        run: |
+          cd base
+          bazel build //:desugar_deploy.jar
+          cd ..
+          mkdir -p tools
+          cp base/bazel-bin/desugar_deploy.jar tools/desugar.jar
 
-    - name: Compile your Java sources
-      run: |
-        mkdir -p build
-        javac -source 8 -target 8 -d build $(find src -name "*.java")
-        jar cf build/classes.jar -C build .
+      - name: Compile your Java sources
+        run: |
+          mkdir -p build/classes
+          find src -name "*.java" > sources.txt
+          javac -source 8 -target 8 -d build/classes @sources.txt
+          jar cf build/classes.jar -C build/classes .
 
-    - name: Run Desugar
-      run: |
-        java -cp tools/desugar.jar com.google.devtools.build.android.desugar.Desugar \
-          --input build/classes.jar \
-          --output build/classes_java7.jar \
-          --classpath_entry "" \
-          --bootclasspath_entry $(dirname $(readlink -f $(which javac)))/../lib/rt.jar
+      - name: Run Desugar
+        run: |
+          BOOTCLASSPATH=$(dirname $(readlink -f $(which javac)))/../lib/rt.jar
+          # Verify if rt.jar exists (on some JDKs it might not)
+          if [ ! -f "$BOOTCLASSPATH" ]; then
+            echo "rt.jar not found at $BOOTCLASSPATH, trying alternative path"
+            BOOTCLASSPATH=$(dirname $(readlink -f $(which javac)))/../jre/lib/rt.jar
+          fi
+          if [ ! -f "$BOOTCLASSPATH" ]; then
+            echo "Error: rt.jar not found, Desugar might fail"
+            exit 1
+          fi
+          java -cp tools/desugar.jar com.google.devtools.build.android.desugar.Desugar \
+            --input build/classes.jar \
+            --output build/classes_java7.jar \
+            --classpath_entry "" \
+            --bootclasspath_entry "$BOOTCLASSPATH"
 
-    - name: Upload Java 7 jar
-      uses: actions/upload-artifact@v4
-      with:
-        name: classes-java7
-        path: build/classes_java7.jar
+      - name: Upload Java 7 jar
+        uses: actions/upload-artifact@v4
+        with:
+          name: classes-java7
+          path: build/classes_java7.jar
