@@ -13,15 +13,20 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v4
 
-      - name: Check presence of jars
+      - name: Setup Java 8
+        uses: actions/setup-java@v3
+        with:
+          java-version: 8
+
+      - name: Check required files
         run: |
-          ls -lh desugar-1.0.1.jar
           ls -lh classes.jar
+          ls -lh desugar-1.0.1.jar
 
       - name: Prepare directories
         run: |
           mkdir -p build
-          mkdir -p /tmp/lambdas
+          mkdir -p $GITHUB_WORKSPACE/lambda_dump
 
       - name: Run Desugar on classes.jar
         run: |
@@ -34,14 +39,15 @@ jobs:
             echo "Warning: rt.jar not found, Desugar might fail"
           fi
 
-          java --add-opens java.base/java.lang.invoke=ALL-UNNAMED \
-            -cp desugar-1.0.1.jar com.google.devtools.build.android.desugar.Desugar \
+          java -cp desugar-1.0.1.jar com.google.devtools.build.android.desugar.Desugar \
             --input classes.jar \
             --output build/classes_java7.jar \
-            --lambda_dump_dir /tmp/lambdas \
-            --bootclasspath_entry "$BOOTCLASSPATH" || true  # don't fail on warning
+            --lambda_dump_dir $GITHUB_WORKSPACE/lambda_dump \
+            --bootclasspath_entry "$BOOTCLASSPATH" \
+            --release 7 \
+            --allow-empty
 
-      - name: Upload desugared jar
+      - name: Upload desugared jar artifact
         uses: actions/upload-artifact@v4
         with:
           name: classes-java7
