@@ -1,0 +1,49 @@
+name: Patch Desugared Jar
+
+on:
+  workflow_run:
+    workflows: ["Desugar Java 8 to Java 7"]
+    types:
+      - completed
+
+jobs:
+  patch:
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup Java 8
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 8
+
+      - name: Download desugared jar artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: classes-java7
+          path: build
+
+      - name: Unpack desugared jar
+        run: unzip -o build/classes_java7.jar -d build/unpacked
+
+      - name: Compile PatchLoadLibRemover
+        run: javac -cp asm-9.4.jar:asm-commons-9.4.jar tools/PatchLoadLibRemover.java -d build/tools
+
+      - name: Run PatchLoadLibRemover on OnnxRuntime.class
+        run: java -cp build/tools:asm-9.4.jar:asm-commons-9.4.jar tools.PatchLoadLibRemover build/unpacked/ai/onnxruntime/OnnxRuntime.class
+
+      - name: Repack patched jar
+        run: |
+          cd build/unpacked
+          jar cf ../classes_java7_patched.jar .
+          cd ../..
+
+      - name: Upload patched jar
+        uses: actions/upload-artifact@v4
+        with:
+          name: classes-java7-patched
+          path: build/classes_java7_patched.jar
