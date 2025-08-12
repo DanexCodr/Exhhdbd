@@ -67,12 +67,18 @@ public class PatchLoadLibRemover {
             }
         }
 
-        // Write modified class back
-        classNode.accept(cw);
+        // Write modified class back (first pass)
         byte[] modifiedClass = cw.toByteArray();
 
+        // Second pass to fully recompute frames and maxs
+        ClassReader cr2 = new ClassReader(modifiedClass);
+        ClassWriter cw2 = new ClassWriter(ClassWriter.COMPUTE_FRAMES | ClassWriter.COMPUTE_MAXS);
+        cr2.accept(cw2, ClassReader.EXPAND_FRAMES);
+        byte[] fixedClass = cw2.toByteArray();
+
+        // Write the fully fixed class back to file
         FileOutputStream fos = new FileOutputStream(classFile);
-        fos.write(modifiedClass);
+        fos.write(fixedClass);
         fos.close();
 
         System.out.println("Patched " + classFilePath + " successfully.");
