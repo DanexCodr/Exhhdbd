@@ -24,6 +24,9 @@ jobs:
           mkdir -p build/unpacked
           unzip -o classes_java7.jar -d build/unpacked
 
+      - name: Debug  List unpacked files before javap
+        run: ls -lR build/unpacked/ai/onnxruntime/
+
       - name: Show original OnnxRuntime.class (before patch)
         run: |
           javap -v build/unpacked/ai/onnxruntime/OnnxRuntime.class > build/original_OnnxRuntime.txt
