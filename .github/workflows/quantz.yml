@@ -1,38 +1,36 @@
-name: Quantize ONNX Model with quantisize.py
+name: Desugar classes.jar
 
 on:
-  workflow_dispatch:
+  push:
+    branches:
+      - main
 
 jobs:
-  quantize:
+  desugar:
     runs-on: ubuntu-latest
+
     steps:
-      - name: Checkout code
+      - name: Checkout repo
         uses: actions/checkout@v4
 
-      - name: Download model.onnx from Release asset
+      - name: Install Bazel manually
         run: |
-          curl -L -o model.onnx "https://github.com/DanexCodr/Exhhdbd/releases/download/Durhrj/model.onnx"
+          sudo apt update
+          sudo apt install -y curl gnupg
+          curl -fsSL https://bazel.build/bazel-release.pub.gpg | gpg --dearmor >bazel-archive-keyring.gpg
+          sudo mv bazel-archive-keyring.gpg /usr/share/keyrings
+          echo "deb [arch=amd64 signed-by=/usr/share/keyrings/bazel-archive-keyring.gpg] https://storage.googleapis.com/bazel-apt stable jdk1.8" | sudo tee /etc/apt/sources.list.d/bazel.list
+          sudo apt update && sudo apt install -y bazel-6.5.0
+          bazel version
 
-      - name: Setup Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.9'
-
-      - name: Install dependencies
+      - name: Download desugar.jar
         run: |
-          python -m pip install --upgrade pip
-          pip install onnx onnxruntime onnxruntime-tools
+          wget https://repo1.maven.org/maven2/com/google/devtools/build/desugar/desugar/1.1.5/desugar-1.1.5.jar -O desugar.jar
 
-      - name: Run quantisize.py script
+      - name: Run desugar on classes.jar
         run: |
-          python quantize.py model.onnx model_quant.onnx
+          java -jar desugar.jar --input classes.jar --output classes-desugared.jar --min-sdk-version 21
 
-      - name: Verify quantized model
-        run: ls -lh model_quant.onnx
-
-      - name: Upload quantized model
-        uses: actions/upload-artifact@v4
-        with:
-          name: quantized-model
-          path: model_quant.onnx
+      - name: Check output
+        run: |
+          ls -lh classes-desugared.jar
