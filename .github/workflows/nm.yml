@@ -13,17 +13,11 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v4
 
-      - name: Download prebuilt desugar jar
-        run: |
-          wget https://storage.googleapis.com/android-build-tools/desugar/desugar.jar -O tools/desugar.jar
-        # Create tools dir if missing
-        shell: bash
-        working-directory: ${{ github.workspace }}
-        env:
-          TOOLSDIR: tools
-        # Create tools folder if not exists
       - name: Ensure tools directory exists
         run: mkdir -p tools
+
+      - name: Download prebuilt desugar jar
+        run: wget https://storage.googleapis.com/android-build-tools/desugar/desugar.jar -O tools/desugar.jar
 
       - name: Compile your Java sources
         run: |
