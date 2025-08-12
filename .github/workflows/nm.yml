@@ -13,8 +13,11 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v4
 
-      - name: Install OpenJDK 8
-        run: sudo apt-get update && sudo apt-get install -y openjdk-8-jdk
+      - name: Setup Java 8
+        uses: actions/setup-java@v3
+        with:
+          distribution: 'temurin'
+          java-version: '8'
 
       - name: Check desugar.jar and classes.jar presence
         run: |
@@ -24,7 +27,7 @@ jobs:
       - name: Run Desugar on existing classes.jar
         run: |
           mkdir -p build
-          BOOTCLASSPATH=/usr/lib/jvm/java-8-openjdk-amd64/jre/lib/rt.jar
+          BOOTCLASSPATH=$JAVA_HOME/jre/lib/rt.jar
           if [ ! -f "$BOOTCLASSPATH" ]; then
             echo "Error: rt.jar not found at $BOOTCLASSPATH"
             exit 1
