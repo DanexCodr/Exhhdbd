@@ -1,7 +1,9 @@
 name: Downgrade ONNX to Opset 14
 
 on:
-  workflow_dispatch:
+  push:
+    branches:
+      - main
 
 jobs:
   downgrade:
