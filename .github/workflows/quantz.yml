@@ -1,36 +1,38 @@
-name: Desugar classes.jar
+name: Quantize ONNX Model with quantisize.py
 
 on:
-  push:
-    branches:
-      - main
+  workflow_dispatch:
 
 jobs:
-  desugar:
+  quantize:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout repo
+      - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Install Bazel manually
+      - name: Download model.onnx from Release asset
         run: |
-          sudo apt update
-          sudo apt install -y curl gnupg
-          curl -fsSL https://bazel.build/bazel-release.pub.gpg | gpg --dearmor >bazel-archive-keyring.gpg
-          sudo mv bazel-archive-keyring.gpg /usr/share/keyrings
-          echo "deb [arch=amd64 signed-by=/usr/share/keyrings/bazel-archive-keyring.gpg] https://storage.googleapis.com/bazel-apt stable jdk1.8" | sudo tee /etc/apt/sources.list.d/bazel.list
-          sudo apt update && sudo apt install -y bazel-6.5.0
-          bazel version
+          curl -L -o model.onnx "https://github.com/DanexCodr/Exhhdbd/releases/download/Durhrj/model.onnx"
 
-      - name: Download desugar.jar
-        run: |
-          wget https://repo1.maven.org/maven2/com/google/devtools/build/desugar/desugar/1.1.5/desugar-1.1.5.jar -O desugar.jar
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
 
-      - name: Run desugar on classes.jar
+      - name: Install dependencies
         run: |
-          java -jar desugar.jar --input classes.jar --output classes-desugared.jar --min-sdk-version 21
+          python -m pip install --upgrade pip
+          pip install onnx onnxruntime onnxruntime-tools
 
-      - name: Check output
+      - name: Run quantisize.py script
         run: |
-          ls -lh classes-desugared.jar
+          python quantize.py model.onnx model_quant.onnx
+
+      - name: Verify quantized model
+        run: ls -lh model_quant.onnx
+
+      - name: Upload quantized model
+        uses: actions/upload-artifact@v4
+        with:
+          name: quantized-model
+          path: model_quant.onnx
