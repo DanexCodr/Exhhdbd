@@ -26,12 +26,12 @@ jobs:
         run: |
           mkdir -p build/unpacked
           unzip -o classes_java7.jar -d build/unpacked
-    
+
       - name: Compile PatchLoadLibRemover
         run: |
           mkdir -p build/tools
           javac -cp asm-9.4.jar:asm-commons-9.4.jar tools/PatchLoadLibRemover.java -d build/tools
-    
+
       - name: Run PatchLoadLibRemover on OnnxRuntime.class
         run: java -cp build/tools:asm-9.4.jar:asm-commons-9.4.jar tools.PatchLoadLibRemover build/unpacked/ai/onnxruntime/OnnxRuntime.class
 
@@ -48,14 +48,17 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v2
         with:
-          api-level: 33
-          build-tools: 33.0.2
+          java-version: 17
+
+      - name: Install Android Build Tools 33.0.2
+        run: |
+          yes | $ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager --install "build-tools;33.0.2"
 
       - name: Run d8
         run: |
           mkdir -p build/dex
-          $ANDROID_HOME/build-tools/33.0.2/d8 --min-api 21 --output build/dex build/unpacked
-    
+          $ANDROID_SDK_ROOT/build-tools/33.0.2/d8 --min-api 21 --output build/dex build/unpacked
+
       - name: Repack patched jar
         run: |
           cd build/unpacked
