@@ -45,6 +45,9 @@ jobs:
             exit 1
           fi
 
+      - name: Make d8.dex executable
+        run: chmod +x ./d8.dex
+
       - name: Dex patched classes
         run: |
           mkdir -p build/dex
