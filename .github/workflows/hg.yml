@@ -1,9 +1,9 @@
-
 name: Patch Desugared Jar on Jar Commit
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
     paths:
       - 'classes_java7.jar'
 
