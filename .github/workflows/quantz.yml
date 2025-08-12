@@ -1,9 +1,7 @@
 name: Quantize ONNX Model with quantisize.py
 
 on:
-  push:
-    branches:
-      - main
+  workflow_dispatch:
 
 jobs:
   quantize:
