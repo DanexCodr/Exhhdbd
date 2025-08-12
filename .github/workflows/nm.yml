@@ -1,0 +1,33 @@
+name: Desugar JAR to Java 7
+
+on:
+  push:
+    paths:
+      - 'classes.jar'  # Trigger only when this file changes
+  workflow_dispatch:   # Allow manual run too
+
+jobs:
+  desugar:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Download Desugar tool
+        run: |
+          wget https://repo1.maven.org/maven2/com/google/devtools/build/desugar/desugar/1.1.5/desugar-1.1.5.jar -O desugar.jar
+
+      - name: Desugar classes.jar to Java 7
+        run: |
+          mkdir output
+          java -jar desugar.jar \
+            --input classes.jar \
+            --output output/classes_java7.jar \
+            --min_sdk_version 15
+
+      - name: Upload desugared JAR
+        uses: actions/upload-artifact@v4
+        with:
+          name: classes_java7
+          path: output/classes_java7.jar
