@@ -19,12 +19,22 @@ jobs:
           distribution: 'temurin'
           java-version: '8'
 
-      - name: Check desugar.jar and classes.jar presence
+      - name: Compile Java sources targeting Java 8 bytecode
         run: |
-          ls -lh desugar-1.0.1.jar
-          ls -lh classes.jar
+          mkdir -p build/classes
+          find src -name "*.java" > sources.txt || true
+          if [ -s sources.txt ]; then
+            javac -source 8 -target 8 -d build/classes @sources.txt
+            jar cf build/classes.jar -C build/classes .
+          else
+            echo "No Java source files found in src/. Skipping compile step."
+            exit 1
+          fi
 
-      - name: Run Desugar on existing classes.jar
+      - name: Check desugar.jar presence
+        run: ls -lh desugar-1.0.1.jar
+
+      - name: Run Desugar on compiled classes.jar
         run: |
           mkdir -p build
           BOOTCLASSPATH=$JAVA_HOME/jre/lib/rt.jar
@@ -34,7 +44,7 @@ jobs:
           fi
 
           java -cp desugar-1.0.1.jar com.google.devtools.build.android.desugar.Desugar \
-            --input classes.jar \
+            --input build/classes.jar \
             --output build/classes_java7.jar \
             --classpath_entry "" \
             --bootclasspath_entry "$BOOTCLASSPATH"
