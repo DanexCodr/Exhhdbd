@@ -24,7 +24,7 @@ jobs:
       - name: Download desugared jar artifact
         uses: actions/download-artifact@v4
         with:
-          name: classes-java7.jar
+          name: classes-java7.zip
           path: build
 
       - name: Unpack desugared jar
