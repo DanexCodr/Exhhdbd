@@ -32,8 +32,10 @@ jobs:
           unzip -o classes_java7.jar -d build/unpacked
     
       - name: Compile PatchLoadLibRemover
-        run: javac -cp asm-9.4.jar:asm-commons-9.4.jar tools/PatchLoadLibRemover.java -d build/tools
-
+        run: |
+          mkdir -p build/tools
+          javac -cp asm-9.4.jar:asm-commons-9.4.jar tools/PatchLoadLibRemover.java -d build/tools
+    
       - name: Run PatchLoadLibRemover on OnnxRuntime.class
         run: java -cp build/tools:asm-9.4.jar:asm-commons-9.4.jar tools.PatchLoadLibRemover build/unpacked/ai/onnxruntime/OnnxRuntime.class
 
