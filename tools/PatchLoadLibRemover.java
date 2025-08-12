@@ -33,7 +33,7 @@ public class PatchLoadLibRemover {
 
         // Use ClassNode to manipulate whole class
         ClassNode classNode = new ClassNode();
-        cr.accept(classNode, 0);
+        cr.accept(classNode, ClassReader.EXPAND_FRAMES);
 
         for (MethodNode method : classNode.methods) {
             InsnList instructions = method.instructions;
