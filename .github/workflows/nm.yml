@@ -1,72 +1,47 @@
-name: Desugar Java 8 to Java 7
-
-on:
-  push:
-    branches: [ main ]
-  workflow_dispatch:
-
-jobs:
-  desugar:
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout repo
-        uses: actions/checkout@v4
-
-      - name: Setup Java 8
-        uses: actions/setup-java@v3
-        with:
-          distribution: temurin
-          java-version: 8
-
-      - name: Check classes.jar presence
-        run: ls -lh classes.jar
-
-      - name: Check desugar.jar presence
-        run: ls -lh desugar-1.0.1.jar
-
-      - name: Run Desugar on classes.jar
-        run: |
-          mkdir -p build
-          BOOTCLASSPATH=$JAVA_HOME/jre/lib/rt.jar
-          if [ ! -f "$BOOTCLASSPATH" ]; then
-            echo "Error: rt.jar not found at $BOOTCLASSPATH"
-            exit 1
-          fi
-
-          java -cp desugar-1.0.1.jar com.google.devtools.build.android.desugar.Desugar \
-            --input classes.jar \
-            --output build/classes_java7.jar \
-            --classpath_entry "" \
-            --bootclasspath_entry "$BOOTCLASSPATH"
-
-      - name: Upload desugared Java 7 jar
-        uses: actions/upload-artifact@v4
-        with:
-          name: classes-java7
-          path: build/classes_java7.jar          java -cp desugar-1.0.1.jar com.google.devtools.build.android.desugar.Desugar \
-            --input classes.jar \
-            --output build/classes_java7.jar \
-            --classpath_entry "" \
-            --bootclasspath_entry "$BOOTCLASSPATH"
-
-      - name: Unzip desugared jar
-        run: |
-          mkdir -p build/unpacked
-          unzip -q build/classes_java7.jar -d build/unpacked
-
-      - name: Patch OnnxRuntime.class to remove System.loadLibrary call
-        run: |
-          java -jar tools/patch-loadlib-remover.jar build/unpacked/ai/onnxruntime/OnnxRuntime.class
-
-      - name: Repack patched jar
-        run: |
-          cd build/unpacked
-          jar cf ../classes_java7_patched.jar .
-          cd ../..
-
-      - name: Upload patched jar
-        uses: actions/upload-artifact@v4
-        with:
-          name: classes-java7-patched
-          path: build/classes_java7_patched.jar
+name: Desugar Java 8 bytecode to Java 7  
+  
+on:  
+  push:  
+    branches: [ main ]  
+  workflow_dispatch:  
+  
+jobs:  
+  desugar:  
+    runs-on: ubuntu-latest  
+  
+    steps:  
+      - name: Checkout repo  
+        uses: actions/checkout@v4  
+  
+      - name: Setup Java 8  
+        uses: actions/setup-java@v3  
+        with:  
+          distribution: 'temurin'  
+          java-version: '8'  
+  
+      - name: Check classes.jar presence  
+        run: ls -lh classes.jar  
+  
+      - name: Check desugar.jar presence  
+        run: ls -lh desugar-1.0.1.jar  
+  
+      - name: Run Desugar on classes.jar  
+        run: |  
+          mkdir -p build  
+          BOOTCLASSPATH=$JAVA_HOME/jre/lib/rt.jar  
+          if [ ! -f "$BOOTCLASSPATH" ]; then  
+            echo "Error: rt.jar not found at $BOOTCLASSPATH"  
+            exit 1  
+          fi  
+  
+          java -cp desugar-1.0.1.jar com.google.devtools.build.android.desugar.Desugar \  
+            --input classes.jar \  
+            --output build/classes_java7.jar \  
+            --classpath_entry "" \  
+            --bootclasspath_entry "$BOOTCLASSPATH"  
+  
+      - name: Upload desugared Java 7 jar  
+        uses: actions/upload-artifact@v4  
+        with:  
+          name: classes-java7  
+          path: build/classes_java7.jar
