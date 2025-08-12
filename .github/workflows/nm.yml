@@ -40,8 +40,23 @@ jobs:
             --classpath_entry "" \
             --bootclasspath_entry "$BOOTCLASSPATH"
 
-      - name: Upload desugared Java 7 jar
+      - name: Unzip desugared jar
+        run: |
+          mkdir -p build/unpacked
+          unzip -q build/classes_java7.jar -d build/unpacked
+
+      - name: Patch OnnxRuntime.class to remove System.loadLibrary call
+        run: |
+          java -jar tools/patch-loadlib-remover.jar build/unpacked/ai/onnxruntime/OnnxRuntime.class
+
+      - name: Repack patched jar
+        run: |
+          cd build/unpacked
+          jar cf ../classes_java7_patched.jar .
+          cd ../..
+
+      - name: Upload patched jar
         uses: actions/upload-artifact@v4
         with:
-          name: classes-java7
-          path: build/classes_java7.jar
+          name: classes-java7-patched
+          path: build/classes_java7_patched.jar
