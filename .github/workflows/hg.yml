@@ -2,7 +2,7 @@ name: Patch Desugared Jar
 
 on:
   workflow_run:
-    workflows: ["Desugar Java 8 to Java 7"]
+    workflows: ["Desugar Java 8 bytecode to Java 7"]
     types:
       - completed
 
