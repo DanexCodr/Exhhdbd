@@ -13,12 +13,6 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up Java 7
-        uses: actions/setup-java@v4
-        with:
-          java-version: '7'
-          distribution: 'zulu'
-
       - name: Prepare Python environment
         uses: actions/setup-python@v4
         with:
@@ -32,12 +26,7 @@ jobs:
           mkdir java_src
           unzip -qq classes.jar -d java_src
 
-      - name: Compile Java sources (Java 7 compatible)
-        run: |
-          mkdir -p build_classes
-          javac -source 1.7 -target 1.7 -d build_classes $(find java_src -name "*.java")
-
-      - name: Run JNI sync check
+      - name: Run JNI sync check (source only)
         run: |
           cat << 'EOF' > check_jni_sync.py
           import os, re, subprocess, sys
@@ -99,8 +88,14 @@ jobs:
 
           python check_jni_sync.py
 
-      - name: Upload rebuilt classes
+      - name: Rebuild source-only JAR
+        run: |
+          cd java_src
+          jar cf ../rebuilt-classes.jar .
+          cd ..
+
+      - name: Upload rebuilt source JAR
         uses: actions/upload-artifact@v4
         with:
           name: rebuilt-classes
-          path: build_classes
+          path: rebuilt-classes.jar
