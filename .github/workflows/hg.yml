@@ -26,12 +26,15 @@ jobs:
           curl -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
             -s https://api.github.com/repos/${{ github.repository }}/actions/artifacts | jq '.artifacts[].name'
 
+      - name: Wait 15 seconds before downloading artifact
+        run: sleep 15
+
       - name: Download desugared jar artifact
         uses: actions/download-artifact@v4
         with:
           name: classes-java7
           path: build
-
+    
       - name: Unpack desugared jar
         run: unzip -o build/classes_java7.jar -d build/unpacked
 
