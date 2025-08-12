@@ -13,42 +13,30 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v4
 
-      - name: Setup Java 8
-        uses: actions/setup-java@v3
-        with:
-          distribution: temurin
-          java-version: 8
+      - name: Install OpenJDK 8
+        run: sudo apt-get update && sudo apt-get install -y openjdk-8-jdk
 
-      - name: Check required files
+      - name: Check desugar.jar and classes.jar presence
         run: |
-          ls -lh classes.jar
           ls -lh desugar-1.0.1.jar
+          ls -lh classes.jar
 
-      - name: Prepare directories
+      - name: Run Desugar on existing classes.jar
         run: |
           mkdir -p build
-          mkdir -p $GITHUB_WORKSPACE/lambda_dump
-
-      - name: Run Desugar on classes.jar
-        run: |
-          BOOTCLASSPATH=$(dirname $(readlink -f $(which javac)))/../lib/rt.jar
+          BOOTCLASSPATH=/usr/lib/jvm/java-8-openjdk-amd64/jre/lib/rt.jar
           if [ ! -f "$BOOTCLASSPATH" ]; then
-            echo "rt.jar not found at $BOOTCLASSPATH, trying alternative path"
-            BOOTCLASSPATH=$(dirname $(readlink -f $(which javac)))/../jre/lib/rt.jar
-          fi
-          if [ ! -f "$BOOTCLASSPATH" ]; then
-            echo "Warning: rt.jar not found, Desugar might fail"
+            echo "Error: rt.jar not found at $BOOTCLASSPATH"
+            exit 1
           fi
 
           java -cp desugar-1.0.1.jar com.google.devtools.build.android.desugar.Desugar \
             --input classes.jar \
             --output build/classes_java7.jar \
-            --lambda_dump_dir $GITHUB_WORKSPACE/lambda_dump \
-            --bootclasspath_entry "$BOOTCLASSPATH" \
-            --release 7 \
-            --allow-empty
+            --classpath_entry "" \
+            --bootclasspath_entry "$BOOTCLASSPATH"
 
-      - name: Upload desugared jar artifact
+      - name: Upload Java 7 jar
         uses: actions/upload-artifact@v4
         with:
           name: classes-java7
