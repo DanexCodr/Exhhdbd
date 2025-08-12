@@ -45,6 +45,11 @@ jobs:
             exit 1
           fi
 
+      - name: Dex patched classes
+        run: |
+          mkdir -p build/dex
+          ./d8.dex --min-api 21 --output build/dex build/unpacked
+
       - name: Repack patched jar
         run: |
           cd build/unpacked
