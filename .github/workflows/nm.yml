@@ -17,8 +17,8 @@ jobs:
         run: mkdir -p tools
 
       - name: Download prebuilt desugar jar
-        run: wget https://storage.googleapis.com/android-build-tools/desugar/desugar.jar -O tools/desugar.jar
-
+        run: wget https://repo1.maven.org/maven2/com/google/devtools/build/desugar/desugar/1.1.4/desugar-1.1.4.jar -O tools/desugar.jar
+        
       - name: Compile your Java sources
         run: |
           mkdir -p build/classes
