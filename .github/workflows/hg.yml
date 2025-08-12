@@ -1,14 +1,12 @@
-name: Patch Desugared Jar
+name: Patch Desugared Jar on Jar Commit
 
 on:
-  workflow_run:
-    workflows: ["Desugar Java 8 bytecode to Java 7"]
-    types:
-      - completed
+  push:
+    paths:
+      - 'classes_java7.jar'
 
 jobs:
   patch:
-    if: ${{ github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
 
     steps:
@@ -21,22 +19,11 @@ jobs:
           distribution: temurin
           java-version: 8
 
-      - name: List available artifacts (debug)
-        run: |
-          curl -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
-            -s https://api.github.com/repos/${{ github.repository }}/actions/artifacts | jq '.artifacts[].name'
+      - name: Debug - list root files
+        run: ls -lh
 
-      - name: Wait 15 seconds before downloading artifact
-        run: sleep 15
-
-      - name: Download desugared jar artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: classes-java7
-          path: build
-    
-      - name: Unpack desugared jar
-        run: unzip -o build/classes_java7.jar -d build/unpacked
+      - name: Unpack committed desugared jar
+        run: unzip -o classes_java7.jar -d build/unpacked
 
       - name: Compile PatchLoadLibRemover
         run: javac -cp asm-9.4.jar:asm-commons-9.4.jar tools/PatchLoadLibRemover.java -d build/tools
@@ -50,7 +37,7 @@ jobs:
           jar cf ../classes_java7_patched.jar .
           cd ../..
 
-      - name: Upload patched jar
+      - name: Upload patched jar artifact
         uses: actions/upload-artifact@v4
         with:
           name: classes-java7-patched
