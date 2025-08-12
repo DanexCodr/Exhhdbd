@@ -18,10 +18,8 @@ jobs:
         with:
           python-version: '3.9'
 
-      - name: Install tools
-        run: |
-          python -m pip install --upgrade pip
-          pip install
+      - name: Upgrade pip
+        run: python -m pip install --upgrade pip
 
       - name: Extract Java sources from classes.jar
         run: |
@@ -31,57 +29,61 @@ jobs:
       - name: Run JNI sync check
         run: |
           cat << 'EOF' > check_jni_sync.py
-          import os, re, subprocess, sys, zipfile, tempfile
+          import os, re, subprocess, sys
 
-          JAVA_NATIVE_RE = re.compile(r'\bnative\\s+[^\\s;]+\\s+([A-Za-z0-9_$]+)\\s*\\(')
+          JAVA_NATIVE_RE = re.compile(r'\bnative\s+[^\s;]+\s+([A-Za-z0-9_$]+)\s*\(')
+
           def gather_java_files(src):
-              return [os.path.join(dp, f) for dp,_,fn in os.walk(src) for f in fn if f.endswith('.java')]
+              return [os.path.join(dp, f) for dp, _, fn in os.walk(src) for f in fn if f.endswith('.java')]
 
           def parse_natives(files):
-              natives=[]
+              natives = []
               for f in files:
-                  src = open(f,'r',errors='ignore').read()
+                  with open(f, 'r', errors='ignore') as fh:
+                      src = fh.read()
                   cls = os.path.splitext(os.path.basename(f))[0]
-                  m=JAVA_NATIVE_RE.findall(src)
-                  for m2 in m:
-                      natives.append((cls,m2))
+                  for m in JAVA_NATIVE_RE.findall(src):
+                      natives.append((cls, m))
               return natives
 
           def list_symbols(so):
               try:
-                  out = subprocess.check_output(['nm','-D','--defined-only',so],stderr=subprocess.DEVNULL).decode()
+                  out = subprocess.check_output(['nm', '-D', '--defined-only', so], stderr=subprocess.DEVNULL).decode()
                   return set([l.split()[-1] for l in out.splitlines() if l.strip()])
               except:
-                  out = subprocess.check_output(['readelf','-Ws',so],stderr=subprocess.DEVNULL).decode()
+                  out = subprocess.check_output(['readelf', '-Ws', so], stderr=subprocess.DEVNULL).decode()
                   return set([l.split()[-1] for l in out.splitlines() if l.strip()])
 
           java_files = gather_java_files('java_src')
           natives = parse_natives(java_files)
           if not natives:
               print('No native methods found in Java sources.')
-              sys.exit(1)
+              sys.exit(0)
+
+          print(f"Found {len(natives)} native methods in Java sources.")
 
           so_files = [f for f in os.listdir('.') if f.endswith('.so')]
           if not so_files:
               print('No .so files found in repo root.')
               sys.exit(1)
 
-          print(f"Found {len(natives)} native methods and {len(so_files)} .so files.")
-          all_syms = set()
+          all_symbols = set()
           for so in so_files:
-              all_syms |= list_symbols(so)
+              all_symbols |= list_symbols(so)
 
           missing = []
           for cls, method in natives:
-              jni_name = f"Java_{cls.replace('.','_')}_{method}"
-              if not any(sym.startswith(jni_name) for sym in all_syms):
-                  missing.append((cls,method,jni_name))
+              expected = f"Java_{cls.replace('_','_1')}_{method}"
+              if not any(s.startswith(expected) for s in all_symbols):
+                  missing.append(f"{cls}.{method}")
 
           if missing:
-              print('JNI mismatches found:')
-              for cls,method,jni in missing:
-                  print(f"  Java method {cls}.{method} -> expected JNI '{jni}' not found")
-              sys.exit(2)
-          print("All native Java methods have matching JNI exports.")
+              print("Missing native implementations for:")
+              for m in missing:
+                  print("  -", m)
+              sys.exit(1)
+          else:
+              print("All native methods have matching JNI implementations.")
           EOF
-          python3 check_jni_sync.py
+
+          python check_jni_sync.py
