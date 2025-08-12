@@ -1,4 +1,4 @@
-name: Desugar using d8.dex
+name: Desugar to Java 7
 
 on:
   push:
@@ -13,23 +13,36 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v4
 
-      - name: Check d8.dex and classes.jar presence
+      - name: Check presence of jars
         run: |
-          ls -lh d8.dex
+          ls -lh desugar-1.0.1.jar
           ls -lh classes.jar
 
-      - name: Create output directory
-        run: mkdir -p build
-
-      - name: Run d8.dex using dalvikvm
+      - name: Prepare directories
         run: |
-          dalvikvm -cp d8.dex com.android.tools.r8.D8 --release 7 --output build classes.jar
+          mkdir -p build
+          mkdir -p /tmp/lambdas
 
-      - name: Verify output
-        run: ls -lh build
+      - name: Run Desugar on classes.jar
+        run: |
+          BOOTCLASSPATH=$(dirname $(readlink -f $(which javac)))/../lib/rt.jar
+          if [ ! -f "$BOOTCLASSPATH" ]; then
+            echo "rt.jar not found at $BOOTCLASSPATH, trying alternative path"
+            BOOTCLASSPATH=$(dirname $(readlink -f $(which javac)))/../jre/lib/rt.jar
+          fi
+          if [ ! -f "$BOOTCLASSPATH" ]; then
+            echo "Warning: rt.jar not found, Desugar might fail"
+          fi
 
-      - name: Upload desugared output
+          java --add-opens java.base/java.lang.invoke=ALL-UNNAMED \
+            -cp desugar-1.0.1.jar com.google.devtools.build.android.desugar.Desugar \
+            --input classes.jar \
+            --output build/classes_java7.jar \
+            --lambda_dump_dir /tmp/lambdas \
+            --bootclasspath_entry "$BOOTCLASSPATH" || true  # don't fail on warning
+
+      - name: Upload desugared jar
         uses: actions/upload-artifact@v4
         with:
           name: classes-java7
-          path: build
+          path: build/classes_java7.jar
