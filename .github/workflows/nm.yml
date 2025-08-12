@@ -13,16 +13,10 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v4
 
-      - name: Ensure tools directory exists
-        run: mkdir -p tools
-
-      - name: Download prebuilt desugar.jar
-        run: wget https://storage.googleapis.com/android-build-tools/desugar/desugar.jar -O tools/desugar.jar
-
-      - name: Check files before desugaring
+      - name: Check desugar.jar and classes.jar presence
         run: |
-          ls -lh classes.jar
           ls -lh tools/desugar.jar
+          ls -lh classes.jar
 
       - name: Run Desugar on existing classes.jar
         run: |
