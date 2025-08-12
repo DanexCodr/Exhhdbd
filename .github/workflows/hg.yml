@@ -39,7 +39,7 @@ jobs:
         run: java -cp build/tools:asm-9.4.jar:asm-commons-9.4.jar tools.PatchLoadLibRemover build/unpacked/ai/onnxruntime/OnnxRuntime.class
 
       - name: Dump patched OnnxRuntime.class bytecode
-        run: javap -cp build/unpacked ai.onnxruntime.OnnxRuntime > build/original_OnnxRuntime.txt
+        run: javap -cp build/unpacked ai.onnxruntime.OnnxRuntime > build/patched_OnnxRuntime.txt
         
       - name: Show bytecode diff
         run: diff -u build/original_OnnxRuntime.txt build/patched_OnnxRuntime.txt || true
