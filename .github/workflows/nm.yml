@@ -17,10 +17,10 @@ jobs:
         run: |
           ls -lh desugar-1.0.1.jar
           ls -lh classes.jar
-        
+
       - name: Run Desugar on existing classes.jar
         run: |
-          mkdir -p build /tmp/lambdas
+          mkdir -p build
           BOOTCLASSPATH=$(dirname $(readlink -f $(which javac)))/../lib/rt.jar
           if [ ! -f "$BOOTCLASSPATH" ]; then
             echo "rt.jar not found at $BOOTCLASSPATH, trying alternative path"
@@ -36,4 +36,10 @@ jobs:
             --output build/classes_java7.jar \
             --classpath_entry "" \
             --bootclasspath_entry "$BOOTCLASSPATH" \
-            --lambda_dump_dir /tmp/lambdas
+            --no-desugar-lambdas
+
+      - name: Upload desugared jar
+        uses: actions/upload-artifact@v4
+        with:
+          name: classes-java7
+          path: build/classes_java7.jar
