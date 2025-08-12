@@ -45,14 +45,16 @@ jobs:
             exit 1
           fi
 
-      - name: Make d8.dex executable
-        run: chmod +x ./d8.dex
+      - name: Rename d8.dex to d8 and make executable
+        run: |
+          mv d8.dex d8
+          chmod +x d8
 
       - name: Dex patched classes
         run: |
           mkdir -p build/dex
-          ./d8.dex --min-api 21 --output build/dex build/unpacked
-
+          ./d8 --min-api 21 --output build/dex build/unpacked
+    
       - name: Repack patched jar
         run: |
           cd build/unpacked
