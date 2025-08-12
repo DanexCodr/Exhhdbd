@@ -15,11 +15,12 @@ jobs:
 
       - name: Check desugar.jar and classes.jar presence
         run: |
-          ls -lh tools/desugar.jar
+          ls -lh desugar-1.0.1.jar
           ls -lh classes.jar
 
       - name: Run Desugar on existing classes.jar
         run: |
+          mkdir -p build
           BOOTCLASSPATH=$(dirname $(readlink -f $(which javac)))/../lib/rt.jar
           if [ ! -f "$BOOTCLASSPATH" ]; then
             echo "rt.jar not found at $BOOTCLASSPATH, trying alternative path"
@@ -29,13 +30,13 @@ jobs:
             echo "Warning: rt.jar not found, Desugar might fail"
           fi
 
-          java -cp tools/desugar.jar com.google.devtools.build.android.desugar.Desugar \
+          java -jar desugar-1.0.1.jar \
             --input classes.jar \
             --output build/classes_java7.jar \
             --classpath_entry "" \
             --bootclasspath_entry "$BOOTCLASSPATH"
 
-      - name: Upload desugared jar
+      - name: Upload Java 7 jar
         uses: actions/upload-artifact@v4
         with:
           name: classes-java7
