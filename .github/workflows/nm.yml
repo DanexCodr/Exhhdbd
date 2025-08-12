@@ -1,4 +1,4 @@
-name: Extract desugar.jar from AAR
+name: Desugar to Java 7
 
 on:
   push:
@@ -6,34 +6,25 @@ on:
   workflow_dispatch:
 
 jobs:
-  extract_desugar:
+  desugar:
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
 
-      - name: Download android_build_tools.aar
-        run: |
-          wget -O android_build_tools.aar "https://example.com/path/to/android_build_tools.aar"
-
-      - name: Create tools directory
+      - name: Ensure tools directory exists
         run: mkdir -p tools
 
-      - name: Extract desugar.jar from AAR
-        run: |
-          unzip -j android_build_tools.aar classes.jar -d tools
-          unzip -j android_build_tools.aar desugar.jar -d tools
-          ls -l tools
+      - name: Download prebuilt desugar.jar
+        run: wget https://storage.googleapis.com/android-build-tools/desugar/desugar.jar -O tools/desugar.jar
 
-      - name: Compile your Java sources
+      - name: Check files before desugaring
         run: |
-          mkdir -p build/classes
-          find src -name "*.java" > sources.txt
-          javac -source 8 -target 8 -d build/classes @sources.txt
-          jar cf build/classes.jar -C build/classes .
+          ls -lh classes.jar
+          ls -lh tools/desugar.jar
 
-      - name: Run Desugar
+      - name: Run Desugar on existing classes.jar
         run: |
           BOOTCLASSPATH=$(dirname $(readlink -f $(which javac)))/../lib/rt.jar
           if [ ! -f "$BOOTCLASSPATH" ]; then
@@ -41,16 +32,16 @@ jobs:
             BOOTCLASSPATH=$(dirname $(readlink -f $(which javac)))/../jre/lib/rt.jar
           fi
           if [ ! -f "$BOOTCLASSPATH" ]; then
-            echo "Error: rt.jar not found, Desugar might fail"
-            exit 1
+            echo "Warning: rt.jar not found, Desugar might fail"
           fi
+
           java -cp tools/desugar.jar com.google.devtools.build.android.desugar.Desugar \
-            --input build/classes.jar \
+            --input classes.jar \
             --output build/classes_java7.jar \
             --classpath_entry "" \
             --bootclasspath_entry "$BOOTCLASSPATH"
 
-      - name: Upload Java 7 jar
+      - name: Upload desugared jar
         uses: actions/upload-artifact@v4
         with:
           name: classes-java7
