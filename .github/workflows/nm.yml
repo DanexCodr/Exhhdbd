@@ -20,7 +20,7 @@ jobs:
           java-version: '8'  
 
       - name: Check classes.jar presence  
-        run: ls -lh classes.jar  
+        run: ls -lh classes-java7-patched.jar  
 
       - name: Check desugar.jar presence  
         run: ls -lh desugar-1.0.1.jar  
