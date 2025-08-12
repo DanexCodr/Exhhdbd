@@ -33,7 +33,7 @@ jobs:
       - name: Compile PatchLoadLibRemover
         run: |
           mkdir -p build/tools
-          javac -cp asm-9.4.jar:asm-commons-9.4.jar tools/PatchLoadLibRemover.java -d build/tools
+          javac -cp asm-tree-9.4.jar asm-9.4.jar:asm-commons-9.4.jar tools/PatchLoadLibRemover.java -d build/tools
 
       - name: Run PatchLoadLibRemover on OnnxRuntime.class
         run: java -cp build/tools:asm-9.4.jar:asm-commons-9.4.jar tools.PatchLoadLibRemover build/unpacked/ai/onnxruntime/OnnxRuntime.class
