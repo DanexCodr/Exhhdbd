@@ -1,4 +1,4 @@
-name: Desugar to Java 7 (via d8 downgrade)
+name: Desugar to Java 7 with D8
 
 on:
   push:
@@ -13,51 +13,21 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v4
 
-      - name: Setup Java 8
-        uses: actions/setup-java@v3
-        with:
-          distribution: 'temurin'
-          java-version: '8'
+      - name: Check classes.jar presence
+        run: ls -lh classes.jar
 
-      - name: Check presence of required files
+      - name: Setup Android SDK Commandline tools
         run: |
-          ls -lh desugar-1.0.1.jar
-          ls -lh classes.jar
+          wget https://dl.google.com/android/repository/commandlinetools-linux-9477386_latest.zip -O cmdline-tools.zip
+          unzip -q cmdline-tools.zip -d cmdline-tools
+          yes | cmdline-tools/cmdline-tools/bin/sdkmanager --sdk_root=${PWD}/android-sdk "build-tools;33.0.2"
 
-      - name: Create build directories
+      - name: Run D8 to convert classes.jar to Java 8 compatible bytecode
         run: |
-          mkdir -p build/classes_d8
+          ./android-sdk/build-tools/33.0.2/d8 --release --output=build/classes_d8 classes.jar
 
-      - name: Run d8 to downgrade classes.jar to Java 8 bytecode
-        run: |
-          java -cp desugar-1.0.1.jar com.android.tools.r8.D8 \
-            --release 8 \
-            --output build/classes_d8 \
-            classes.jar
-
-      - name: Create jar from d8 output
-        run: |
-          cd build/classes_d8
-          jar cf ../classes_d8.jar .
-          cd ../../
-
-      - name: Run Desugar on downgraded classes jar
-        run: |
-          mkdir -p build
-          BOOTCLASSPATH=$JAVA_HOME/jre/lib/rt.jar
-          if [ ! -f "$BOOTCLASSPATH" ]; then
-            echo "Error: rt.jar not found at $BOOTCLASSPATH"
-            exit 1
-          fi
-
-          java -cp desugar-1.0.1.jar com.google.devtools.build.android.desugar.Desugar \
-            --input build/classes_d8.jar \
-            --output build/classes_java7.jar \
-            --classpath_entry "" \
-            --bootclasspath_entry "$BOOTCLASSPATH"
-
-      - name: Upload Java 7 jar artifact
+      - name: Upload D8 output
         uses: actions/upload-artifact@v4
         with:
-          name: classes-java7
-          path: build/classes_java7.jar
+          name: classes_d8
+          path: build/classes_d8
