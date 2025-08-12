@@ -24,7 +24,7 @@ jobs:
 
       - name: Run D8 to convert classes.jar to Java 8 compatible bytecode
         run: |
-         ./android-sdk/build-tools/33.0.2/d8 --release --output build/classes_d8 classes.jar
+          ./android-sdk/build-tools/33.0.2/d8 --release --output build/classes_d8.jar classes.jar
     
       - name: Upload D8 output
         uses: actions/upload-artifact@v4
