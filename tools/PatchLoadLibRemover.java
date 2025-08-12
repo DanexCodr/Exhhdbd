@@ -1,7 +1,7 @@
 package tools;
 
 import org.objectweb.asm.*;
-import org.objectweb.asm.commons.AdviceAdapter;
+import org.objectweb.asm.tree.*;
 
 import java.io.File;
 import java.io.FileInputStream;
@@ -31,50 +31,46 @@ public class PatchLoadLibRemover {
         ClassReader cr = new ClassReader(classBytes);
         ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_MAXS | ClassWriter.COMPUTE_FRAMES);
 
-        ClassVisitor cv = new ClassVisitor(Opcodes.ASM9, cw) {
-            @Override
-            public MethodVisitor visitMethod(int access, String name, String desc,
-                                             String signature, String[] exceptions) {
-                MethodVisitor mv = super.visitMethod(access, name, desc, signature, exceptions);
+        // Use ClassNode to manipulate whole class
+        ClassNode classNode = new ClassNode();
+        cr.accept(classNode, 0);
 
-                return new AdviceAdapter(Opcodes.ASM9, mv, access, name, desc) {
+        for (MethodNode method : classNode.methods) {
+            InsnList instructions = method.instructions;
+            for (AbstractInsnNode insn = instructions.getFirst(); insn != null; ) {
+                AbstractInsnNode next = insn.getNext();
 
-                    private boolean skipNextLdc = false;
+                // Check for pattern: LDC (the library name) followed immediately by System.loadLibrary call
+                if (insn.getOpcode() == Opcodes.LDC
+                        && next != null
+                        && next.getOpcode() == Opcodes.INVOKESTATIC) {
 
-                    @Override
-                    public void visitLdcInsn(Object value) {
-                        if (skipNextLdc) {
-                            // Skip this LDC instruction (argument to loadLibrary)
-                            skipNextLdc = false;
-                            System.out.println("Removed argument load: " + value);
-                        } else {
-                            super.visitLdcInsn(value);
-                        }
+                    MethodInsnNode methodInsn = (MethodInsnNode) next;
+                    if ("java/lang/System".equals(methodInsn.owner)
+                            && "loadLibrary".equals(methodInsn.name)
+                            && "(Ljava/lang/String;)V".equals(methodInsn.desc)) {
+
+                        System.out.println("Removed call to System.loadLibrary");
+                        System.out.println("Removed argument load: " + ((LdcInsnNode) insn).cst);
+
+                        // Remove both the LDC and the call instructions
+                        instructions.remove(insn);
+                        instructions.remove(next);
+
+                        // Continue from the instruction after removed call
+                        insn = next.getNext();
+                        continue;
                     }
+                }
 
-                    @Override
-                    public void visitMethodInsn(int opcode, String owner, String methodName, String methodDesc, boolean isInterface) {
-                        if (opcode == Opcodes.INVOKESTATIC
-                            && owner.equals("java/lang/System")
-                            && methodName.equals("loadLibrary")
-                            && methodDesc.equals("(Ljava/lang/String;)V")) {
-                            // Remove the call + the argument (previous LDC)
-                            skipNextLdc = true; // flag to skip previous LDC
-                            System.out.println("Removed call to System.loadLibrary");
-                            // Do NOT call super.visitMethodInsn, so call is removed
-                        } else {
-                            super.visitMethodInsn(opcode, owner, methodName, methodDesc, isInterface);
-                        }
-                    }
-                };
+                insn = next;
             }
-        };
+        }
 
-        cr.accept(cv, ClassReader.EXPAND_FRAMES);
-
+        // Write modified class back
+        classNode.accept(cw);
         byte[] modifiedClass = cw.toByteArray();
 
-        // Write back the patched class file
         FileOutputStream fos = new FileOutputStream(classFile);
         fos.write(modifiedClass);
         fos.close();
