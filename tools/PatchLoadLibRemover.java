@@ -70,7 +70,7 @@ public class PatchLoadLibRemover {
             }
         };
 
-        cr.accept(cv, 0);
+        cr.accept(cv, ClassReader.EXPAND_FRAMES);
 
         byte[] modifiedClass = cw.toByteArray();
 
