@@ -1,0 +1,60 @@
+name: Downgrade ONNX to Opset 14
+
+on:
+  workflow_dispatch:
+
+jobs:
+  downgrade:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download model.onnx from Release asset
+        run: |
+          curl -L -o model.onnx "https://github.com/DanexCodr/Exhhdbd/releases/download/Durhrj/model.onnx"
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install onnx onnxruntime onnx-simplifier
+
+      - name: Downgrade opset to 14
+        run: |
+          python - <<'EOF'
+          import onnx
+          from onnx import version_converter
+
+          input_model = "model.onnx"
+          output_model = "model_opset14.onnx"
+
+          model = onnx.load(input_model)
+          print(f"Original opset: {model.opset_import[0].version}")
+          converted = version_converter.convert_version(model, 14)
+          onnx.save(converted, output_model)
+          print(f"Converted to opset 14: {output_model}")
+          EOF
+
+      - name: Simplify model
+        run: |
+          python -m onnxsim model_opset14.onnx model_simplified.onnx
+
+      - name: Verify final model
+        run: |
+          python - <<'EOF'
+          import onnx
+          model = onnx.load("model_simplified.onnx")
+          onnx.checker.check_model(model)
+          print(f"Final opset: {model.opset_import[0].version}")
+          EOF
+
+      - name: Upload simplified model
+        uses: actions/upload-artifact@v4
+        with:
+          name: downgraded-model
+          path: model_simplified.onnx
