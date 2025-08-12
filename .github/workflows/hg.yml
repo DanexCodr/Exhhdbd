@@ -2,6 +2,7 @@ name: Patch Desugared Jar on Jar Commit
 
 on:
   push:
+    branches: [main]
     paths:
       - 'classes_java7.jar'
 
@@ -23,8 +24,10 @@ jobs:
         run: ls -lh
 
       - name: Unpack committed desugared jar
-        run: unzip -o classes_java7.jar -d build/unpacked
-
+        run: |
+          mkdir -p build/unpacked
+          unzip -o classes_java7.jar -d build/unpacked
+    
       - name: Compile PatchLoadLibRemover
         run: javac -cp asm-9.4.jar:asm-commons-9.4.jar tools/PatchLoadLibRemover.java -d build/tools
 
