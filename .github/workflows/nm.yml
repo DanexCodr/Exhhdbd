@@ -1,4 +1,4 @@
-name: Desugar to Java 7
+name: Extract desugar.jar from AAR
 
 on:
   push:
@@ -6,19 +6,26 @@ on:
   workflow_dispatch:
 
 jobs:
-  desugar:
+  extract_desugar:
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
 
-      - name: Ensure tools directory exists
+      - name: Download android_build_tools.aar
+        run: |
+          wget -O android_build_tools.aar "https://example.com/path/to/android_build_tools.aar"
+
+      - name: Create tools directory
         run: mkdir -p tools
 
-      - name: Download prebuilt desugar jar
-        run: wget https://repo1.maven.org/maven2/com/google/devtools/build/desugar/desugar/1.1.4/desugar-1.1.4.jar -O tools/desugar.jar
-        
+      - name: Extract desugar.jar from AAR
+        run: |
+          unzip -j android_build_tools.aar classes.jar -d tools
+          unzip -j android_build_tools.aar desugar.jar -d tools
+          ls -l tools
+
       - name: Compile your Java sources
         run: |
           mkdir -p build/classes
